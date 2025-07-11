@@ -1,0 +1,6 @@
+.env
+icd_10_codes,csv
+PMC_Patients_clean.csv
+*.pyc
+__pycache__/
+venv/
