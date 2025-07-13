@@ -1,6 +1,6 @@
-# Patient Analysis
+# Patient Analysis - Clinical Decision Support System
 
-A secure healthcare application for analyzing patient data and ICD-10 codes using Supabase. Features comprehensive data validation, sanitization, and a REST API with security middleware.
+A secure healthcare application for analyzing patient data and ICD-10 codes using Supabase. Features comprehensive data validation, sanitization, REST API with security middleware, and **Phase 2 Intelligence Layer** with Claude AI integration for clinical entity extraction and ICD-10 mapping.
 
 ## Setup
 
@@ -54,6 +54,12 @@ The API will be available at: `http://localhost:5000` (or configured PORT)
 - `GET /api/notes/search?q=<query>&field=<field>` - Search notes
 - `GET /api/notes/patient/<patient_id>` - Get notes by patient
 
+#### Intelligence Layer Routes (Phase 2)
+- `POST /api/analysis/extract` - Extract clinical entities from patient notes
+- `POST /api/analysis/diagnose` - Get ICD-10 mappings with confidence scores
+- `POST /api/analysis/batch` - Process multiple notes for clinical insights
+- `GET /api/analysis/priority/<note_id>` - Get high-priority findings for a note
+
 #### Example API Usage
 ```bash
 # Get all patients
@@ -69,6 +75,16 @@ curl -X POST http://localhost:5000/api/patients/ \
 
 # Search notes
 curl "http://localhost:5000/api/notes/search?q=symptoms"
+
+# Extract clinical entities (Phase 2)
+curl -X POST http://localhost:5000/api/analysis/extract \
+  -H "Content-Type: application/json" \
+  -d '{"note_text": "Patient has chest pain and fever", "patient_context": {"age": 45, "gender": "M"}}'
+
+# Get ICD-10 mappings (Phase 2)
+curl -X POST http://localhost:5000/api/analysis/diagnose \
+  -H "Content-Type: application/json" \
+  -d '{"note_text": "Patient diagnosed with acute myocardial infarction"}'
 ```
 
 ## Database Setup
@@ -87,18 +103,24 @@ curl "http://localhost:5000/api/notes/search?q=symptoms"
 
 ### Run All Tests
 ```bash
-python -m pytest test/
+source venv/bin/activate
+python -m pytest test/ -v
 ```
 
-### Run Tests with Verbose Output
+### Test Intelligence Layer (Phase 2)
 ```bash
-python -m pytest test/ -v
+source venv/bin/activate
+python test_intelligence_layer.py     # Complete workflow demonstration
+python test_claude_service.py         # Claude integration test
+python -m pytest test/test_clinical_analysis_service.py -v
+python -m pytest test/test_icd10_vector_matcher.py -v
 ```
 
 ### Run Tests for Specific Module
 ```bash
 python -m pytest test/utils/          # Database utility tests
 python -m pytest test/routes/         # API endpoint tests
+python -m pytest test/services/       # Intelligence layer tests
 python -m pytest test/utils/test_create_icd10_db.py
 ```
 
@@ -126,12 +148,16 @@ test/
 │   ├── test_patient_routes.py
 │   └── test_note_routes.py
 ├── services/        # Tests for business logic
-│   └── test_supabase_service.py
-└── utils/           # Tests for utility functions
-    ├── test_create_icd10_db.py
-    ├── test_create_patient_note_db.py
-    ├── test_validation.py
-    └── test_sanitization.py
+│   ├── test_supabase_service.py
+│   ├── test_clinical_analysis_service.py    # Phase 2: Claude integration
+│   └── test_icd10_vector_matcher.py         # Phase 2: ICD-10 mapping
+├── utils/           # Tests for utility functions
+│   ├── test_create_icd10_db.py
+│   ├── test_create_patient_note_db.py
+│   ├── test_validation.py
+│   └── test_sanitization.py
+├── test_claude_service.py          # Phase 2: Demo script
+└── test_intelligence_layer.py     # Phase 2: Complete workflow test
 ```
 
 ## Development Guidelines
@@ -158,7 +184,9 @@ Patient-Analysis/
 │   │   ├── patient_routes.py
 │   │   └── note_routes.py
 │   ├── services/    # Business logic
-│   │   └── supabase_service.py
+│   │   ├── supabase_service.py
+│   │   ├── clinical_analysis_service.py  # Phase 2: Claude AI integration
+│   │   └── icd10_vector_matcher.py       # Phase 2: ICD-10 mapping
 │   └── utils/       # Utility functions
 │       ├── create_icd10_db.py
 │       ├── create_patient_note_db.py
@@ -181,6 +209,30 @@ Patient-Analysis/
 ```
 
 ## Key Components
+
+### Phase 2: Intelligence Layer 🧠
+
+#### Clinical Analysis Service (`app/services/clinical_analysis_service.py`)
+- **Claude AI Integration**: Uses Claude 3.5 Sonnet for clinical text analysis
+- **Entity Extraction**: Identifies symptoms, conditions, medications, vital signs, procedures
+- **Confidence Scoring**: Each extraction includes 0.0-1.0 confidence levels
+- **Medical Context**: Handles negation, severity, temporal information
+- **High-Priority Detection**: Flags critical findings requiring immediate attention
+- **Batch Processing**: Analyzes multiple patient notes simultaneously
+
+#### ICD-10 Vector Matcher (`app/services/icd10_vector_matcher.py`)
+- **Vector Similarity**: Cosine similarity matching against ICD-10 embeddings
+- **Text-Based Fallback**: Simple text matching when vectors unavailable
+- **Entity Mapping**: Maps clinical entities to relevant ICD-10 codes
+- **Hierarchy Analysis**: Provides ICD code category information
+- **Confidence Weighting**: Combines extraction confidence with similarity scores
+
+#### Intelligence Layer Capabilities
+- **Clinical Entity Types**: Symptoms, conditions, medications, vital signs, procedures, abnormal findings
+- **Risk Assessment**: Automatic risk level classification (low/moderate/high/critical)
+- **Priority Flagging**: Identifies findings requiring immediate medical attention
+- **Medical Compliance**: Structured output suitable for clinical workflows
+- **Comprehensive Testing**: Full test coverage with medical scenario validation
 
 ### Data Validation (`app/utils/validation.py`)
 - Input validation for all API endpoints
