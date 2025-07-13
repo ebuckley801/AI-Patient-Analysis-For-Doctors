@@ -55,9 +55,11 @@ The API will be available at: `http://localhost:5000` (or configured PORT)
 - `GET /api/notes/patient/<patient_id>` - Get notes by patient
 
 #### Intelligence Layer Routes (Phase 2) 🧠
-- `POST /api/analysis/extract` - Extract clinical entities from patient notes (with caching & persistence)
+- `POST /api/analysis/extract` - Extract clinical entities from patient notes (with enhanced NLP & persistence)
 - `POST /api/analysis/diagnose` - Get ICD-10 mappings with confidence scores  
-- `POST /api/analysis/batch` - Process multiple notes for clinical insights
+- `POST /api/analysis/batch` - Process multiple notes for clinical insights (up to 50 notes)
+- `POST /api/analysis/batch-async` - **High-performance async batch processing (up to 1000 notes)** 🚀
+- `POST /api/analysis/priority-scan` - **Rapid priority triage scanning (up to 2000 notes)** ⚡
 - `GET /api/analysis/priority/<note_id>` - Get high-priority findings for a note (fully implemented)
 - `GET /api/analysis/health` - Health check for intelligence layer services (includes storage stats)
 
@@ -95,9 +97,12 @@ The Intelligence Layer provides AI-powered clinical analysis capabilities using 
 
 ### Core Features
 - **Clinical Entity Extraction**: Identifies symptoms, conditions, medications, vital signs, procedures
+- **Enhanced NLP Processing**: Advanced negation detection, abbreviation expansion, temporal extraction 🆕
 - **Risk Assessment**: Automatic classification (low/moderate/high/critical) with confidence scoring
 - **ICD-10 Mapping**: Semantic similarity matching to relevant medical codes
 - **Batch Processing**: Analyze multiple patient notes simultaneously
+- **Async High-Performance Processing**: Up to 1000 notes concurrently with configurable performance 🚀
+- **Priority Triage Scanning**: Rapid identification of high-risk cases from large note volumes ⚡
 - **Priority Detection**: Flags high-priority findings requiring immediate attention
 - **Persistent Storage**: Database storage for analysis results, entities, and ICD mappings
 - **Smart Caching**: Automatic result caching with 7-day TTL for performance optimization
@@ -161,7 +166,45 @@ Content-Type: application/json
 
 **Response**: Array of analysis results + summary statistics
 
-#### Priority Findings (New!)
+#### Async Batch Processing (High Performance) 🚀
+```bash
+POST /api/analysis/batch-async
+Content-Type: application/json
+
+{
+  "notes": [
+    {
+      "note_id": "async_1",
+      "note_text": "Patient note content",
+      "patient_context": {"age": 45, "gender": "M"},
+      "patient_id": "patient_123"
+    }
+  ],
+  "config": {
+    "max_concurrent": 10,
+    "timeout_seconds": 30,
+    "include_icd_mapping": true,
+    "chunk_size": 50
+  }
+}
+```
+
+**Response**: Comprehensive batch results with performance metrics, cache hit rates, and timing statistics
+
+#### Priority Triage Scanning ⚡
+```bash
+POST /api/analysis/priority-scan
+Content-Type: application/json
+
+{
+  "notes": [...],
+  "risk_threshold": "high"
+}
+```
+
+**Response**: Rapid identification of high-risk cases optimized for large-scale triage
+
+#### Priority Findings
 ```bash
 GET /api/analysis/priority/<note_id>?risk_threshold=high&include_details=true
 ```
@@ -208,16 +251,27 @@ source venv/bin/activate
 python -m pytest test/ -v
 ```
 
-### Test Intelligence Layer (Phase 2)
+### Test Intelligence Layer (Phase 2 + Option B Enhancements)
 ```bash
 source venv/bin/activate
+
+# Core Intelligence Layer Tests
 python test/test_intelligence_layer.py               # Complete workflow demonstration
 python test/test_claude_service.py                   # Claude integration test
 python test/test_simple_api.py                       # API integration test (no server needed)
 python test/test_api_endpoints.py                    # Full API endpoint test (requires server)
+
+# Database Persistence Tests
 python test/test_analysis_storage_service.py         # Database persistence tests
 python test/test_create_intelligence_db.py           # Database schema tests
 python test/test_analysis_routes_persistence.py      # API persistence integration tests
+
+# Enhanced NLP & Async Processing Tests (New!)
+python test/test_clinical_nlp.py                     # Enhanced NLP features
+python test/test_async_clinical_analysis.py          # Async batch processing
+python test/test_enhanced_clinical_analysis.py       # NLP-enhanced clinical analysis
+
+# Unit Tests
 python -m pytest test/test_clinical_analysis_service.py -v
 python -m pytest test/test_icd10_vector_matcher.py -v
 ```
@@ -269,6 +323,9 @@ test/
 ├── test_analysis_storage_service.py      # Phase 2: Database persistence tests
 ├── test_create_intelligence_db.py        # Phase 2: Database schema tests
 ├── test_analysis_routes_persistence.py   # Phase 2: API persistence integration
+├── test_clinical_nlp.py                  # Option B: Enhanced NLP features
+├── test_async_clinical_analysis.py       # Option B: Async batch processing
+├── test_enhanced_clinical_analysis.py    # Option B: NLP-enhanced analysis
 └── test_api_manual.md                    # Phase 2: Manual API testing guide
 ```
 
@@ -297,13 +354,15 @@ Patient-Analysis/
 │   │   └── note_routes.py
 │   ├── services/    # Business logic
 │   │   ├── supabase_service.py
-│   │   ├── clinical_analysis_service.py    # Phase 2: Claude AI integration
+│   │   ├── clinical_analysis_service.py    # Phase 2: Claude AI integration (enhanced)
 │   │   ├── icd10_vector_matcher.py         # Phase 2: ICD-10 mapping
-│   │   └── analysis_storage_service.py     # Phase 2: Database persistence
+│   │   ├── analysis_storage_service.py     # Phase 2: Database persistence
+│   │   └── async_clinical_analysis.py      # Option B: High-performance async processing
 │   └── utils/       # Utility functions
 │       ├── create_icd10_db.py
 │       ├── create_patient_note_db.py
 │       ├── create_intelligence_db.py       # Phase 2: Intelligence layer tables
+│       ├── clinical_nlp.py                 # Option B: Enhanced NLP processing
 │       ├── validation.py
 │       └── sanitization.py
 ├── test/            # Test files (mirrors app structure)
@@ -349,13 +408,29 @@ Patient-Analysis/
 - **Priority Retrieval**: Query high-priority findings by note, patient, or risk level
 - **Cache Maintenance**: Automatic cleanup of expired cache entries
 
+#### Enhanced Clinical NLP (`app/utils/clinical_nlp.py`) 🆕
+- **Medical Abbreviation Expansion**: 100+ medical abbreviations automatically expanded
+- **Sophisticated Negation Detection**: 20+ negation patterns including medical-specific contexts
+- **Temporal Relationship Extraction**: Onset, duration, frequency, and progression detection
+- **Uncertainty Assessment**: Handles speculation markers and confidence adjustments
+- **Clinical Context Awareness**: Entity relationships and medical coherence validation
+
+#### Async Clinical Analysis (`app/services/async_clinical_analysis.py`) 🚀
+- **High-Performance Batch Processing**: Up to 1000 notes with configurable concurrency
+- **Priority Triage Scanning**: Rapid identification of high-risk cases (up to 2000 notes)
+- **Intelligent Chunking**: Memory-efficient processing with automatic chunk management
+- **Advanced Retry Logic**: Exponential backoff and error recovery mechanisms
+- **Performance Monitoring**: Comprehensive metrics including cache hit rates and timing
+
 #### Intelligence Layer Capabilities
 - **Clinical Entity Types**: Symptoms, conditions, medications, vital signs, procedures, abnormal findings
+- **Enhanced Accuracy**: Advanced NLP processing for clinical accuracy improvements
 - **Risk Assessment**: Automatic risk level classification (low/moderate/high/critical)
 - **Priority Flagging**: Identifies findings requiring immediate medical attention
+- **Scalable Processing**: From single notes to large-scale batch operations
 - **Medical Compliance**: Structured output suitable for clinical workflows
 - **Persistent Storage**: Complete database persistence with session tracking
-- **Performance Optimization**: Smart caching with automatic cache management
+- **Performance Optimization**: Smart caching with automatic cache management and async processing
 - **Comprehensive Testing**: Full test coverage with medical scenario validation
 
 ### Data Validation (`app/utils/validation.py`)

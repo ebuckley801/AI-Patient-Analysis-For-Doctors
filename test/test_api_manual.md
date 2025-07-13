@@ -137,7 +137,84 @@ python app.py
 }
 ```
 
-### 6. Cache and Storage Features (New in Phase 2)
+### 6. Enhanced NLP Features (New in Option B)
+```bash
+# Test enhanced negation detection
+curl -X POST http://localhost:5001/api/analysis/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "note_text": "Patient denies chest pain but reports SOB. No fever present. Possible pneumonia.",
+    "patient_context": {"age": 45, "gender": "male"},
+    "note_id": "nlp_test_001"
+  }'
+
+# Test medical abbreviation expansion
+curl -X POST http://localhost:5001/api/analysis/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "note_text": "Pt is 65 y/o M with h/o DM, HTN who presents with c/o SOB and CP. BP 160/90, HR 110 bpm.",
+    "patient_context": {"age": 65, "gender": "male"}
+  }'
+
+# Test temporal relationship extraction
+curl -X POST http://localhost:5001/api/analysis/extract \
+  -H "Content-Type: application/json" \
+  -d '{
+    "note_text": "Chest pain started 3 days ago, worsening since yesterday. Intermittent episodes.",
+    "patient_context": {"age": 55, "gender": "female"}
+  }'
+```
+
+### 7. Async Batch Processing (High Performance)
+```bash
+# High-performance async batch processing (up to 1000 notes)
+curl -X POST http://localhost:5001/api/analysis/batch-async \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notes": [
+      {
+        "note_id": "async_1",
+        "note_text": "Patient has severe chest pain and SOB",
+        "patient_context": {"age": 65, "gender": "male"},
+        "patient_id": "patient_001"
+      },
+      {
+        "note_id": "async_2", 
+        "note_text": "Follow-up visit, no acute distress",
+        "patient_context": {"age": 45, "gender": "female"},
+        "patient_id": "patient_002"
+      }
+    ],
+    "config": {
+      "max_concurrent": 10,
+      "timeout_seconds": 30,
+      "include_icd_mapping": true,
+      "include_storage": true,
+      "chunk_size": 50
+    }
+  }'
+
+# Priority scanning for rapid triage (up to 2000 notes)
+curl -X POST http://localhost:5001/api/analysis/priority-scan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "notes": [
+      {
+        "note_id": "scan_1",
+        "note_text": "Patient in severe distress with chest pain",
+        "patient_context": {"age": 70, "gender": "male"}
+      },
+      {
+        "note_id": "scan_2",
+        "note_text": "Routine checkup, vitals stable",
+        "patient_context": {"age": 35, "gender": "female"}
+      }
+    ],
+    "risk_threshold": "high"
+  }'
+```
+
+### 8. Cache and Storage Features (Phase 2)
 ```bash
 # Create intelligence layer database tables (run once)
 python app/utils/create_intelligence_db.py
@@ -158,11 +235,29 @@ curl -X GET "http://localhost:5001/api/analysis/priority/persistent_test_001?inc
 
 ## Testing Notes
 
-- **Phase 2 Persistence**: Run `python app/utils/create_intelligence_db.py` to set up database tables
-- **Caching**: Analysis results are automatically cached for 7 days to improve performance
+### Enhanced NLP Features (Option B)
+- **Medical Abbreviation Expansion**: 100+ medical abbreviations automatically expanded
+- **Negation Detection**: 20+ sophisticated negation patterns (denies, negative for, ruled out, etc.)
+- **Temporal Extraction**: Onset, duration, frequency, and progression detection
+- **Uncertainty Assessment**: Handles speculation markers (possible, suspected, likely)
+- **Clinical Context Awareness**: Entity relationships and medical coherence
+
+### Async Processing Performance
+- **Batch Async**: Up to 1000 notes with configurable concurrency (max 20 concurrent)
+- **Priority Scan**: Up to 2000 notes optimized for rapid triage
+- **Chunking**: Automatic memory management with configurable chunk sizes
+- **Retry Logic**: Automatic retry with exponential backoff for failed analyses
+- **Performance Metrics**: Detailed timing and success rate statistics
+
+### Phase 2 Persistence
+- **Database Setup**: Run `python app/utils/create_intelligence_db.py` to set up database tables
+- **Smart Caching**: Analysis results automatically cached for 7 days to improve performance
 - **Session Tracking**: Each analysis creates a session record for tracking and retrieval
+- **Graceful Degradation**: API works even if database storage fails
+
+### General Testing
 - The ICD-10 cache will be empty unless the `icd_codes` table exists in Supabase
 - Clinical entity extraction will work regardless of database status
 - All endpoints include comprehensive error handling and validation
 - Request/response logging is enabled for debugging
-- **Storage Graceful Degradation**: API works even if database storage fails
+- Enhanced entities include detailed NLP metadata and confidence adjustments

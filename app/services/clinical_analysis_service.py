@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import anthropic
 from app.config.config import Config
+from app.utils.clinical_nlp import create_clinical_nlp_processor
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ class ClinicalAnalysisService:
     
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=Config.ANTHROPIC_KEY)
+        self.nlp_processor = create_clinical_nlp_processor()
         
     def extract_clinical_entities(self, patient_note: str, patient_context: Optional[Dict] = None) -> Dict[str, Any]:
         """
@@ -25,7 +27,10 @@ class ClinicalAnalysisService:
             Dict containing extracted entities with confidence scores
         """
         try:
-            prompt = self._build_extraction_prompt(patient_note, patient_context)
+            # Preprocess the text with abbreviation expansion and normalization
+            preprocessed_note = self.nlp_processor.preprocess_clinical_text(patient_note)
+            
+            prompt = self._build_extraction_prompt(preprocessed_note, patient_context, include_nlp_instructions=True)
             
             response = self.client.messages.create(
                 model="claude-3-5-sonnet-20241022",
@@ -40,8 +45,13 @@ class ClinicalAnalysisService:
             )
             
             result = self._parse_claude_response(response.content[0].text)
+            
+            # Enhance entities with NLP analysis
+            result = self._enhance_entities_with_nlp(result, patient_note, preprocessed_note)
+            
             result['analysis_timestamp'] = datetime.utcnow().isoformat()
             result['model_version'] = "claude-3-5-sonnet-20241022"
+            result['nlp_enhanced'] = True
             
             return result
             
@@ -49,7 +59,7 @@ class ClinicalAnalysisService:
             logger.error(f"Error in clinical entity extraction: {str(e)}")
             return self._empty_extraction_result(error=str(e))
     
-    def _build_extraction_prompt(self, patient_note: str, patient_context: Optional[Dict] = None) -> str:
+    def _build_extraction_prompt(self, patient_note: str, patient_context: Optional[Dict] = None, include_nlp_instructions: bool = False) -> str:
         """Build the prompt for Claude to extract clinical entities"""
         
         context_info = ""
@@ -143,7 +153,27 @@ Important guidelines:
 4. Use medical terminology consistently
 5. Flag any concerning findings that need immediate attention
 6. If information is unclear or ambiguous, lower the confidence score
-7. Include exact text spans for traceability
+7. Include exact text spans for traceability"""
+
+        if include_nlp_instructions:
+            prompt += """
+8. **Enhanced Negation Detection**: Look for sophisticated negation patterns:
+   - Direct negations: "no", "not", "without", "absent", "denies"
+   - Medical negations: "negative for", "ruled out", "unlikely"
+   - Temporal negations: "no longer", "previously resolved"
+   - Conditional negations: "if no", "unless", "except"
+9. **Temporal Context**: Identify temporal relationships:
+   - Onset: "started 3 days ago", "began yesterday", "sudden onset"
+   - Duration: "for the past week", "ongoing for months"
+   - Frequency: "occurs daily", "intermittent episodes"
+   - Progression: "worsening", "improving", "stable"
+10. **Uncertainty Markers**: Adjust confidence for speculation:
+    - Lower confidence for: "possible", "suspected", "may be", "suggests"
+    - Higher confidence for: "definite", "confirmed", "positive for"
+11. **Abbreviation Awareness**: The text has been pre-processed to expand medical abbreviations
+12. **Context Relationships**: Consider entity relationships and clinical coherence"""
+
+        prompt += """
 
 Return only the JSON object, no additional text."""
 
@@ -277,3 +307,107 @@ Return only the JSON object, no additional text."""
                 })
         
         return high_priority
+    
+    def _enhance_entities_with_nlp(self, result: Dict[str, Any], original_text: str, preprocessed_text: str) -> Dict[str, Any]:
+        """
+        Enhance extracted entities with advanced NLP analysis
+        
+        Args:
+            result: Initial extraction result from Claude
+            original_text: Original patient note text
+            preprocessed_text: Text after abbreviation expansion
+            
+        Returns:
+            Enhanced result with NLP analysis
+        """
+        enhanced_result = result.copy()
+        
+        # Process each entity type
+        entity_types = ['symptoms', 'conditions', 'medications', 'vital_signs', 'procedures', 'abnormal_findings']
+        
+        for entity_type in entity_types:
+            enhanced_entities = []
+            
+            for entity in result.get(entity_type, []):
+                try:
+                    # Find entity position in original text
+                    entity_text = entity.get('entity', '')
+                    text_span = entity.get('text_span', entity_text)
+                    
+                    # Find position of the entity in the original text
+                    entity_position = self._find_entity_position(original_text, text_span, entity_text)
+                    
+                    if entity_position:
+                        # Enhance with NLP analysis
+                        enhanced_entity = self.nlp_processor.enhance_entity_with_nlp(
+                            entity, original_text, entity_position
+                        )
+                        
+                        # Add preprocessing information
+                        enhanced_entity['preprocessed'] = {
+                            'abbreviations_expanded': original_text != preprocessed_text,
+                            'original_span': text_span
+                        }
+                        
+                        enhanced_entities.append(enhanced_entity)
+                    else:
+                        # Keep original entity if position not found
+                        enhanced_entities.append(entity)
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to enhance entity {entity.get('entity', 'unknown')}: {str(e)}")
+                    enhanced_entities.append(entity)
+            
+            enhanced_result[entity_type] = enhanced_entities
+        
+        # Add NLP processing metadata
+        enhanced_result['nlp_analysis'] = {
+            'negation_detection_applied': True,
+            'temporal_extraction_applied': True,
+            'uncertainty_assessment_applied': True,
+            'abbreviations_expanded': original_text != preprocessed_text,
+            'processing_timestamp': datetime.utcnow().isoformat()
+        }
+        
+        return enhanced_result
+    
+    def _find_entity_position(self, text: str, text_span: str, entity_text: str) -> Optional[Tuple[int, int]]:
+        """
+        Find the position of an entity in the text
+        
+        Args:
+            text: Full text to search in
+            text_span: Exact text span from extraction
+            entity_text: Entity name
+            
+        Returns:
+            Tuple of (start, end) positions or None if not found
+        """
+        try:
+            # Try to find the exact text span first
+            if text_span and text_span.strip():
+                start = text.lower().find(text_span.lower())
+                if start != -1:
+                    return (start, start + len(text_span))
+            
+            # Fallback to entity text
+            if entity_text:
+                start = text.lower().find(entity_text.lower())
+                if start != -1:
+                    return (start, start + len(entity_text))
+            
+            # Try partial matches for multi-word entities
+            if entity_text and ' ' in entity_text:
+                words = entity_text.lower().split()
+                for word in words:
+                    if len(word) > 3:  # Only search for substantial words
+                        start = text.lower().find(word)
+                        if start != -1:
+                            # Estimate position based on first significant word
+                            return (start, start + len(word))
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error finding entity position: {str(e)}")
+            return None

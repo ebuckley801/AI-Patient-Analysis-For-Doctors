@@ -1,9 +1,11 @@
 from flask import Blueprint, request, jsonify
 import logging
+import asyncio
 from datetime import datetime
 from app.services.clinical_analysis_service import ClinicalAnalysisService
 from app.services.icd10_vector_matcher import ICD10VectorMatcher
 from app.services.analysis_storage_service import AnalysisStorageService
+from app.services.async_clinical_analysis import AsyncClinicalAnalysis, BatchAnalysisConfig
 from app.utils.validation import Validator, ValidationError
 from app.utils.sanitization import Sanitizer
 from app.middleware.security import log_request
@@ -19,6 +21,7 @@ analysis_bp = Blueprint('analysis', __name__)
 clinical_service = ClinicalAnalysisService()
 icd_matcher = ICD10VectorMatcher()
 storage_service = AnalysisStorageService()
+async_clinical_service = AsyncClinicalAnalysis()
 
 @analysis_bp.route('/extract', methods=['POST'])
 @log_request()
@@ -676,6 +679,287 @@ def health_check():
             'status': 'unhealthy',
             'timestamp': datetime.utcnow().isoformat(),
             'error': str(e)
+        }), 500
+
+@analysis_bp.route('/batch-async', methods=['POST'])
+@log_request()
+def batch_analysis_async():
+    """
+    High-performance async batch processing for large-scale clinical analysis
+    
+    Request body:
+    {
+        "notes": [
+            {
+                "note_id": "optional_id_1",
+                "note_text": "Patient note content 1", 
+                "patient_context": {"age": 45, "gender": "M"},
+                "patient_id": "patient_123"
+            }
+        ],
+        "config": {
+            "max_concurrent": 10,
+            "timeout_seconds": 30,
+            "include_icd_mapping": true,
+            "include_storage": true,
+            "chunk_size": 50,
+            "retry_attempts": 2
+        }
+    }
+    
+    Returns:
+    {
+        "success": true,
+        "results": [...],
+        "summary": {
+            "total_notes": 100,
+            "successful_analyses": 98,
+            "cache_hit_rate": 0.15,
+            "average_processing_time_ms": 1200
+        }
+    }
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({
+                'success': False,
+                'error': 'Request must be JSON',
+                'code': 'INVALID_CONTENT_TYPE'
+            }), 400
+        
+        data = request.get_json()
+        
+        # Validate required fields
+        if 'notes' not in data or not isinstance(data['notes'], list):
+            return jsonify({
+                'success': False,
+                'error': 'notes array is required',
+                'code': 'MISSING_REQUIRED_FIELD'
+            }), 400
+        
+        notes = data['notes']
+        config_data = data.get('config', {})
+        
+        # Validate batch size
+        if len(notes) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'At least one note is required',
+                'code': 'EMPTY_BATCH'
+            }), 400
+        
+        if len(notes) > 1000:  # Higher limit for async processing
+            return jsonify({
+                'success': False,
+                'error': 'Maximum 1000 notes per async batch',
+                'code': 'BATCH_TOO_LARGE'
+            }), 400
+        
+        # Sanitize input notes
+        sanitized_notes = []
+        for i, note_data in enumerate(notes):
+            if 'note_text' not in note_data:
+                return jsonify({
+                    'success': False,
+                    'error': f'note_text is required for note at index {i}',
+                    'code': 'MISSING_NOTE_TEXT'
+                }), 400
+            
+            sanitized_note = {
+                'note_id': note_data.get('note_id', f'async_note_{i}'),
+                'note_text': Sanitizer.sanitize_text(note_data['note_text']),
+                'patient_context': note_data.get('patient_context', {}),
+                'patient_id': note_data.get('patient_id')
+            }
+            
+            # Sanitize patient context
+            if sanitized_note['patient_context']:
+                for key, value in sanitized_note['patient_context'].items():
+                    if isinstance(value, str):
+                        sanitized_note['patient_context'][key] = Sanitizer.sanitize_text(value)
+            
+            sanitized_notes.append(sanitized_note)
+        
+        # Create batch analysis configuration
+        config = BatchAnalysisConfig(
+            max_concurrent=min(config_data.get('max_concurrent', 10), 20),  # Cap at 20
+            timeout_seconds=min(config_data.get('timeout_seconds', 30), 60),  # Cap at 60s
+            include_icd_mapping=config_data.get('include_icd_mapping', True),
+            include_storage=config_data.get('include_storage', True),
+            chunk_size=min(config_data.get('chunk_size', 50), 100),  # Cap at 100
+            retry_attempts=min(config_data.get('retry_attempts', 2), 3)  # Cap at 3
+        )
+        
+        logger.info(f"Starting async batch analysis for {len(sanitized_notes)} notes")
+        
+        # Run async batch analysis
+        def run_async_batch():
+            return asyncio.run(async_clinical_service.batch_analyze_notes(sanitized_notes, config))
+        
+        # Execute in thread to avoid blocking Flask
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_async_batch)
+            result = future.result(timeout=300)  # 5 minute total timeout
+        
+        logger.info(f"Async batch analysis completed: {result['summary']['successful_analyses']}/{len(sanitized_notes)} successful")
+        
+        return jsonify(result), 200
+        
+    except concurrent.futures.TimeoutError:
+        logger.error("Async batch analysis timed out")
+        return jsonify({
+            'success': False,
+            'error': 'Batch analysis timed out after 5 minutes',
+            'code': 'BATCH_TIMEOUT'
+        }), 504
+    except Exception as e:
+        logger.error(f"Error in async batch analysis: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error during async batch analysis',
+            'details': str(e),
+            'code': 'INTERNAL_ERROR'
+        }), 500
+
+@analysis_bp.route('/priority-scan', methods=['POST'])
+@log_request()
+def priority_scan():
+    """
+    High-speed priority scanning for identifying high-risk cases
+    Optimized for rapid triage of large note volumes
+    
+    Request body:
+    {
+        "notes": [
+            {
+                "note_id": "scan_1",
+                "note_text": "Patient note content",
+                "patient_context": {"age": 45, "gender": "M"}
+            }
+        ],
+        "risk_threshold": "high"  // "moderate", "high", "critical"
+    }
+    
+    Returns:
+    {
+        "success": true,
+        "priority_cases": [
+            {
+                "note_id": "scan_1",
+                "risk_level": "critical",
+                "requires_immediate_attention": true,
+                "primary_concerns": ["chest pain", "shortness of breath"]
+            }
+        ],
+        "scan_summary": {
+            "total_notes_scanned": 500,
+            "priority_cases_found": 23,
+            "scan_time_ms": 15000
+        }
+    }
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({
+                'success': False,
+                'error': 'Request must be JSON',
+                'code': 'INVALID_CONTENT_TYPE'
+            }), 400
+        
+        data = request.get_json()
+        
+        # Validate required fields
+        if 'notes' not in data or not isinstance(data['notes'], list):
+            return jsonify({
+                'success': False,
+                'error': 'notes array is required',
+                'code': 'MISSING_REQUIRED_FIELD'
+            }), 400
+        
+        notes = data['notes']
+        risk_threshold = data.get('risk_threshold', 'high')
+        
+        # Validate risk threshold
+        valid_thresholds = ['moderate', 'high', 'critical']
+        if risk_threshold not in valid_thresholds:
+            return jsonify({
+                'success': False,
+                'error': f'Invalid risk_threshold. Must be one of: {valid_thresholds}',
+                'code': 'INVALID_PARAMETER'
+            }), 400
+        
+        # Validate batch size for scanning
+        if len(notes) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'At least one note is required',
+                'code': 'EMPTY_BATCH'
+            }), 400
+        
+        if len(notes) > 2000:  # Higher limit for priority scanning
+            return jsonify({
+                'success': False,
+                'error': 'Maximum 2000 notes per priority scan',
+                'code': 'SCAN_BATCH_TOO_LARGE'
+            }), 400
+        
+        # Sanitize input notes
+        sanitized_notes = []
+        for i, note_data in enumerate(notes):
+            if 'note_text' not in note_data:
+                return jsonify({
+                    'success': False,
+                    'error': f'note_text is required for note at index {i}',
+                    'code': 'MISSING_NOTE_TEXT'
+                }), 400
+            
+            sanitized_note = {
+                'note_id': note_data.get('note_id', f'scan_note_{i}'),
+                'note_text': Sanitizer.sanitize_text(note_data['note_text']),
+                'patient_context': note_data.get('patient_context', {})
+            }
+            
+            # Sanitize patient context
+            if sanitized_note['patient_context']:
+                for key, value in sanitized_note['patient_context'].items():
+                    if isinstance(value, str):
+                        sanitized_note['patient_context'][key] = Sanitizer.sanitize_text(value)
+            
+            sanitized_notes.append(sanitized_note)
+        
+        logger.info(f"Starting priority scan for {len(sanitized_notes)} notes with {risk_threshold} threshold")
+        
+        # Run async priority scan
+        def run_async_scan():
+            return asyncio.run(async_clinical_service.priority_scan_async(sanitized_notes, risk_threshold))
+        
+        # Execute in thread to avoid blocking Flask
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_async_scan)
+            result = future.result(timeout=180)  # 3 minute timeout for scanning
+        
+        logger.info(f"Priority scan completed: {result['scan_summary']['priority_cases_found']} priority cases found")
+        
+        return jsonify(result), 200
+        
+    except concurrent.futures.TimeoutError:
+        logger.error("Priority scan timed out")
+        return jsonify({
+            'success': False,
+            'error': 'Priority scan timed out after 3 minutes',
+            'code': 'SCAN_TIMEOUT'
+        }), 504
+    except Exception as e:
+        logger.error(f"Error in priority scan: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error during priority scan',
+            'details': str(e),
+            'code': 'INTERNAL_ERROR'
         }), 500
 
 # Error handlers for the blueprint
