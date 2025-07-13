@@ -16,6 +16,51 @@ SUPABASE_KEY=your_supabase_key
 ROOT_DIR=path_to_your_csv_files
 ```
 
+## Flask API
+
+### Launch the API Server
+```bash
+python app.py
+```
+
+The API will be available at: `http://localhost:5000`
+
+### API Endpoints
+
+#### Patient Routes (`/api/patients/`)
+- `GET /api/patients/` - Get all patients (paginated)
+- `GET /api/patients/<patient_id>` - Get notes for specific patient
+- `POST /api/patients/` - Create new patient note
+- `PUT /api/patients/<patient_id>` - Update patient note
+- `DELETE /api/patients/<patient_id>` - Delete all notes for patient
+- `GET /api/patients/search?q=<query>` - Search patient notes
+
+#### Note Routes (`/api/notes/`)
+- `GET /api/notes/` - Get all notes (paginated)
+- `GET /api/notes/<note_id>` - Get specific note
+- `POST /api/notes/` - Create new note
+- `PUT /api/notes/<note_id>` - Update specific note
+- `DELETE /api/notes/<note_id>` - Delete specific note
+- `GET /api/notes/search?q=<query>&field=<field>` - Search notes
+- `GET /api/notes/patient/<patient_id>` - Get notes by patient
+
+#### Example API Usage
+```bash
+# Get all patients
+curl http://localhost:5000/api/patients/
+
+# Get specific patient
+curl http://localhost:5000/api/patients/123
+
+# Create new patient note
+curl -X POST http://localhost:5000/api/patients/ \
+  -H "Content-Type: application/json" \
+  -d '{"patient_id": 123, "patient_uid": "uid-123", "patient_note": "New note", "age": 30, "gender": "F"}'
+
+# Search notes
+curl "http://localhost:5000/api/notes/search?q=symptoms"
+```
+
 ## Database Setup
 
 ### ICD-10 Codes
@@ -42,7 +87,8 @@ python -m pytest test/ -v
 
 ### Run Tests for Specific Module
 ```bash
-python -m pytest test/utils/
+python -m pytest test/utils/          # Database utility tests
+python -m pytest test/routes/         # API endpoint tests
 python -m pytest test/utils/test_create_icd10_db.py
 ```
 
@@ -50,6 +96,8 @@ python -m pytest test/utils/test_create_icd10_db.py
 ```bash
 python -m unittest test.utils.test_create_icd10_db
 python -m unittest test.utils.test_create_patient_note_db
+python -m unittest test.routes.test_patient_routes
+python -m unittest test.routes.test_note_routes
 ```
 
 ### Run Tests with Coverage Report
