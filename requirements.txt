@@ -6,3 +6,5 @@ pytest
 pytest-cov
 flask
 bleach
+anthropic
+numpy
