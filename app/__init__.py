@@ -8,8 +8,10 @@ def create_app():
     # Register blueprints
     from app.routes.patient_routes import patient_bp
     from app.routes.note_routes import note_bp
+    from app.routes.analysis_routes import analysis_bp
     
     app.register_blueprint(patient_bp, url_prefix='/api/patients')
     app.register_blueprint(note_bp, url_prefix='/api/notes')
+    app.register_blueprint(analysis_bp, url_prefix='/api/analysis')
     
     return app

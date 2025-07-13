@@ -54,11 +54,12 @@ The API will be available at: `http://localhost:5000` (or configured PORT)
 - `GET /api/notes/search?q=<query>&field=<field>` - Search notes
 - `GET /api/notes/patient/<patient_id>` - Get notes by patient
 
-#### Intelligence Layer Routes (Phase 2)
-- `POST /api/analysis/extract` - Extract clinical entities from patient notes
-- `POST /api/analysis/diagnose` - Get ICD-10 mappings with confidence scores
+#### Intelligence Layer Routes (Phase 2) 🧠
+- `POST /api/analysis/extract` - Extract clinical entities from patient notes (with caching & persistence)
+- `POST /api/analysis/diagnose` - Get ICD-10 mappings with confidence scores  
 - `POST /api/analysis/batch` - Process multiple notes for clinical insights
-- `GET /api/analysis/priority/<note_id>` - Get high-priority findings for a note
+- `GET /api/analysis/priority/<note_id>` - Get high-priority findings for a note (fully implemented)
+- `GET /api/analysis/health` - Health check for intelligence layer services (includes storage stats)
 
 #### Example API Usage
 ```bash
@@ -87,7 +88,107 @@ curl -X POST http://localhost:5000/api/analysis/diagnose \
   -d '{"note_text": "Patient diagnosed with acute myocardial infarction"}'
 ```
 
+## Intelligence Layer API (Phase 2) 🧠
+
+### Overview
+The Intelligence Layer provides AI-powered clinical analysis capabilities using Claude AI for extracting clinical insights from patient notes and mapping them to ICD-10 codes.
+
+### Core Features
+- **Clinical Entity Extraction**: Identifies symptoms, conditions, medications, vital signs, procedures
+- **Risk Assessment**: Automatic classification (low/moderate/high/critical) with confidence scoring
+- **ICD-10 Mapping**: Semantic similarity matching to relevant medical codes
+- **Batch Processing**: Analyze multiple patient notes simultaneously
+- **Priority Detection**: Flags high-priority findings requiring immediate attention
+- **Persistent Storage**: Database storage for analysis results, entities, and ICD mappings
+- **Smart Caching**: Automatic result caching with 7-day TTL for performance optimization
+- **Session Tracking**: Complete audit trail of analysis requests and results
+
+### API Endpoints
+
+#### Extract Clinical Entities
+```bash
+POST /api/analysis/extract
+Content-Type: application/json
+
+{
+  "note_text": "Patient note content",
+  "patient_context": {
+    "age": 45,
+    "gender": "M",
+    "medical_history": "hypertension, diabetes"
+  }
+}
+```
+
+**Response**: Clinical entities with confidence scores, risk assessment, and priority flags
+
+#### Diagnose with ICD-10 Mapping
+```bash
+POST /api/analysis/diagnose
+Content-Type: application/json
+
+{
+  "note_text": "Patient note content",
+  "patient_context": {"age": 45, "gender": "M"},
+  "options": {
+    "include_low_confidence": false,
+    "max_icd_matches": 5
+  }
+}
+```
+
+**Response**: Complete analysis + ICD-10 code mappings with similarity scores
+
+#### Batch Analysis
+```bash
+POST /api/analysis/batch
+Content-Type: application/json
+
+{
+  "notes": [
+    {
+      "note_id": "note_1",
+      "note_text": "Patient note 1",
+      "patient_context": {"age": 30, "gender": "F"}
+    }
+  ],
+  "options": {
+    "include_icd_mapping": true,
+    "include_priority_analysis": true
+  }
+}
+```
+
+**Response**: Array of analysis results + summary statistics
+
+#### Priority Findings (New!)
+```bash
+GET /api/analysis/priority/<note_id>?risk_threshold=high&include_details=true
+```
+
+**Response**: High-priority findings for a specific note with optional entity details
+
+#### Health Check
+```bash
+GET /api/analysis/health
+```
+
+**Response**: Service status, ICD cache info, storage statistics, cache performance metrics
+
+### Testing the API
+
+For detailed testing instructions, see:
+- `test/test_api_manual.md` - Manual curl commands for testing
+- `test/test_api_endpoints.py` - Automated endpoint testing (requires running server)
+- `test/test_simple_api.py` - API integration testing (no server required)
+
 ## Database Setup
+
+### Intelligence Layer Tables (Phase 2) 🆕
+1. **Set up intelligence layer persistence**: `python app/utils/create_intelligence_db.py`
+   - Creates `analysis_sessions`, `clinical_entities`, `entity_icd_mappings`, `analysis_cache` tables
+   - Adds database indexes for optimal performance
+   - Creates cache cleanup functions and triggers
 
 ### ICD-10 Codes
 1. Place your ICD-10 CSV file in the root directory as `icd_10_codes.csv`
@@ -110,8 +211,13 @@ python -m pytest test/ -v
 ### Test Intelligence Layer (Phase 2)
 ```bash
 source venv/bin/activate
-python test_intelligence_layer.py     # Complete workflow demonstration
-python test_claude_service.py         # Claude integration test
+python test/test_intelligence_layer.py               # Complete workflow demonstration
+python test/test_claude_service.py                   # Claude integration test
+python test/test_simple_api.py                       # API integration test (no server needed)
+python test/test_api_endpoints.py                    # Full API endpoint test (requires server)
+python test/test_analysis_storage_service.py         # Database persistence tests
+python test/test_create_intelligence_db.py           # Database schema tests
+python test/test_analysis_routes_persistence.py      # API persistence integration tests
 python -m pytest test/test_clinical_analysis_service.py -v
 python -m pytest test/test_icd10_vector_matcher.py -v
 ```
@@ -156,8 +262,14 @@ test/
 │   ├── test_create_patient_note_db.py
 │   ├── test_validation.py
 │   └── test_sanitization.py
-├── test_claude_service.py          # Phase 2: Demo script
-└── test_intelligence_layer.py     # Phase 2: Complete workflow test
+├── test_claude_service.py                 # Phase 2: Claude integration demo
+├── test_intelligence_layer.py            # Phase 2: Complete workflow test
+├── test_api_endpoints.py                 # Phase 2: Full API endpoint testing
+├── test_simple_api.py                    # Phase 2: API integration test (no server)
+├── test_analysis_storage_service.py      # Phase 2: Database persistence tests
+├── test_create_intelligence_db.py        # Phase 2: Database schema tests
+├── test_analysis_routes_persistence.py   # Phase 2: API persistence integration
+└── test_api_manual.md                    # Phase 2: Manual API testing guide
 ```
 
 ## Development Guidelines
@@ -185,11 +297,13 @@ Patient-Analysis/
 │   │   └── note_routes.py
 │   ├── services/    # Business logic
 │   │   ├── supabase_service.py
-│   │   ├── clinical_analysis_service.py  # Phase 2: Claude AI integration
-│   │   └── icd10_vector_matcher.py       # Phase 2: ICD-10 mapping
+│   │   ├── clinical_analysis_service.py    # Phase 2: Claude AI integration
+│   │   ├── icd10_vector_matcher.py         # Phase 2: ICD-10 mapping
+│   │   └── analysis_storage_service.py     # Phase 2: Database persistence
 │   └── utils/       # Utility functions
 │       ├── create_icd10_db.py
 │       ├── create_patient_note_db.py
+│       ├── create_intelligence_db.py       # Phase 2: Intelligence layer tables
 │       ├── validation.py
 │       └── sanitization.py
 ├── test/            # Test files (mirrors app structure)
@@ -227,11 +341,21 @@ Patient-Analysis/
 - **Hierarchy Analysis**: Provides ICD code category information
 - **Confidence Weighting**: Combines extraction confidence with similarity scores
 
+#### Analysis Storage Service (`app/services/analysis_storage_service.py`) 🆕
+- **Session Management**: Create and track analysis sessions with complete audit trail
+- **Entity Persistence**: Store clinical entities with confidence scores and metadata
+- **ICD Mapping Storage**: Persistent storage of entity-to-ICD mappings with rankings
+- **Smart Caching**: Automatic result caching with TTL and hit rate tracking
+- **Priority Retrieval**: Query high-priority findings by note, patient, or risk level
+- **Cache Maintenance**: Automatic cleanup of expired cache entries
+
 #### Intelligence Layer Capabilities
 - **Clinical Entity Types**: Symptoms, conditions, medications, vital signs, procedures, abnormal findings
 - **Risk Assessment**: Automatic risk level classification (low/moderate/high/critical)
 - **Priority Flagging**: Identifies findings requiring immediate medical attention
 - **Medical Compliance**: Structured output suitable for clinical workflows
+- **Persistent Storage**: Complete database persistence with session tracking
+- **Performance Optimization**: Smart caching with automatic cache management
 - **Comprehensive Testing**: Full test coverage with medical scenario validation
 
 ### Data Validation (`app/utils/validation.py`)
