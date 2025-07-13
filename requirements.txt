@@ -1,0 +1,6 @@
+pandas
+supabase
+python-dotenv
+tqdm
+pytest
+pytest-cov
