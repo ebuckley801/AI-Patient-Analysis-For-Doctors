@@ -1,16 +1,26 @@
 from flask import Blueprint, request, jsonify
 from app.services.supabase_service import SupabaseService
 from app.models.patient import Patient
+from app.utils.validation import (
+    validate_json_request, validate_query_params, 
+    PatientNoteSchema, Validator
+)
+from app.middleware.security import sanitize_middleware, require_content_type, log_request
 
 patient_bp = Blueprint('patients', __name__)
 supabase_service = SupabaseService()
 
 @patient_bp.route('/', methods=['GET'])
+@log_request()
+@validate_query_params(
+    limit=lambda x: Validator.validate_pagination(x, 0)[0],
+    offset=lambda x: Validator.validate_pagination(100, x)[1]
+)
 def get_patients():
     """Get all patients with pagination"""
     try:
-        limit = request.args.get('limit', 100, type=int)
-        offset = request.args.get('offset', 0, type=int)
+        limit = getattr(request, 'validated_params', {}).get('limit', 100)
+        offset = getattr(request, 'validated_params', {}).get('offset', 0)
         
         patients = supabase_service.get_patient_notes(limit=limit, offset=offset)
         return jsonify({
@@ -22,10 +32,13 @@ def get_patients():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @patient_bp.route('/<int:patient_id>', methods=['GET'])
+@log_request()
 def get_patient(patient_id):
     """Get all notes for a specific patient"""
     try:
-        notes = supabase_service.get_patient_notes_by_patient_id(patient_id)
+        # Validate patient_id
+        validated_id = Validator.validate_patient_id(patient_id)
+        notes = supabase_service.get_patient_notes_by_patient_id(validated_id)
         if not notes:
             return jsonify({'success': False, 'error': 'Patient not found'}), 404
         
@@ -37,19 +50,17 @@ def get_patient(patient_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @patient_bp.route('/', methods=['POST'])
+@log_request()
+@require_content_type('application/json')
+@sanitize_middleware()
+@validate_json_request(PatientNoteSchema.validate_create_request)
 def create_patient():
     """Create a new patient note"""
     try:
-        data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ['patient_id', 'patient_uid', 'patient_note', 'age', 'gender']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({'success': False, 'error': f'Missing field: {field}'}), 400
+        validated_data = request.validated_data
         
         # Create patient object
-        patient = Patient.from_dict(data)
+        patient = Patient.from_dict(validated_data)
         
         # Save to database
         result = supabase_service.create_patient_note(patient.to_dict())
@@ -105,10 +116,12 @@ def delete_patient(patient_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @patient_bp.route('/search', methods=['GET'])
+@log_request()
+@validate_query_params(q=Validator.validate_search_query)
 def search_patients():
     """Search patients by note content"""
     try:
-        query = request.args.get('q', '')
+        query = getattr(request, 'validated_params', {}).get('q')
         if not query:
             return jsonify({'success': False, 'error': 'Query parameter "q" is required'}), 400
         

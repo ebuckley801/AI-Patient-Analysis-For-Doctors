@@ -1,5 +1,10 @@
 from flask import Blueprint, request, jsonify
 from app.services.supabase_service import SupabaseService
+from app.utils.validation import (
+    validate_json_request, validate_query_params, 
+    PatientNoteSchema, Validator
+)
+from app.middleware.security import sanitize_middleware, require_content_type, log_request
 
 note_bp = Blueprint('notes', __name__)
 supabase_service = SupabaseService()
@@ -36,18 +41,15 @@ def get_note(note_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @note_bp.route('/', methods=['POST'])
+@log_request()
+@require_content_type('application/json')
+@sanitize_middleware()
+@validate_json_request(PatientNoteSchema.validate_create_request)
 def create_note():
     """Create a new note"""
     try:
-        data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ['patient_id', 'patient_uid', 'patient_note', 'age', 'gender']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({'success': False, 'error': f'Missing field: {field}'}), 400
-        
-        result = supabase_service.create_patient_note(data)
+        validated_data = request.validated_data
+        result = supabase_service.create_patient_note(validated_data)
         
         return jsonify({
             'success': True,
