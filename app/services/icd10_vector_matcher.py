@@ -11,12 +11,41 @@ logger = logging.getLogger(__name__)
 class ICD10VectorMatcher:
     """Service for matching clinical entities to ICD-10 codes using vector similarity"""
     
-    def __init__(self):
+    def __init__(self, force_numpy: bool = False):
+        """
+        Initialize ICD10VectorMatcher with hybrid Faiss/numpy approach
+        
+        Args:
+            force_numpy: Force use of numpy implementation (for testing/fallback)
+        """
         self.supabase_service = SupabaseService()
         self.clinical_service = ClinicalAnalysisService()
         self._icd_codes_cache = None
         self._embeddings_cache = None
-        self._load_icd_data()
+        
+        # Try to initialize Faiss matcher first
+        self.faiss_matcher = None
+        self.use_faiss = False
+        
+        if not force_numpy:
+            try:
+                from app.services.faiss_icd10_matcher import create_faiss_icd10_matcher
+                self.faiss_matcher = create_faiss_icd10_matcher()
+                if self.faiss_matcher is not None:
+                    self.use_faiss = True
+                    logger.info("✅ Using Faiss for high-performance vector search")
+                else:
+                    logger.warning("⚠️ Faiss matcher creation failed, falling back to numpy")
+            except ImportError as e:
+                logger.warning(f"⚠️ Faiss not available: {e}")
+                logger.warning("📋 Install with: pip install faiss-cpu")
+            except Exception as e:
+                logger.warning(f"⚠️ Faiss initialization failed: {e}")
+        
+        # Initialize numpy fallback if Faiss not available
+        if not self.use_faiss:
+            logger.info("🔄 Using numpy implementation for vector search")
+            self._load_icd_data()
     
     def _load_icd_data(self):
         """Load ICD-10 codes and their embeddings from database"""
@@ -122,7 +151,40 @@ Return only the expanded text without explanation."""
     
     def find_similar_icd_codes(self, entity_text: str, top_k: int = 5, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
         """
-        Find ICD-10 codes similar to the given clinical entity
+        Find ICD-10 codes similar to the given clinical entity using hybrid approach
+        
+        Args:
+            entity_text: Clinical entity text to match
+            top_k: Number of top matches to return
+            min_similarity: Minimum similarity threshold
+            
+        Returns:
+            List of matching ICD codes with similarity scores
+        """
+        if self.use_faiss and self.faiss_matcher is not None:
+            # Use high-performance Faiss search
+            try:
+                entity_embedding = self._get_entity_embedding(entity_text)
+                results = self.faiss_matcher.search_similar_codes(
+                    entity_embedding, top_k=top_k, min_similarity=min_similarity
+                )
+                
+                # Add entity_text to results for consistency
+                for result in results:
+                    result['entity_text'] = entity_text
+                
+                return results
+                
+            except Exception as e:
+                logger.error(f"Faiss search failed: {e}, falling back to numpy")
+                # Continue to numpy fallback
+        
+        # Fallback to numpy implementation
+        return self._find_similar_icd_codes_numpy(entity_text, top_k, min_similarity)
+    
+    def _find_similar_icd_codes_numpy(self, entity_text: str, top_k: int = 5, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
+        """
+        Original numpy-based vector similarity search (fallback method)
         
         Args:
             entity_text: Clinical entity text to match
@@ -150,7 +212,8 @@ Return only the expanded text without explanation."""
                         'icd_code': self._icd_codes_cache[i]['icd_10_code'],
                         'description': self._icd_codes_cache[i]['description'],
                         'similarity': float(similarity),
-                        'entity_text': entity_text
+                        'entity_text': entity_text,
+                        'search_method': 'numpy_vector'
                     })
             
             # Sort by similarity and return top k
@@ -374,9 +437,53 @@ Return only the expanded text without explanation."""
         self._load_icd_data()
         
     def get_cache_info(self) -> Dict[str, Any]:
-        """Get information about the current cache"""
-        return {
+        """Get information about the current cache and search method"""
+        base_info = {
+            'search_method': 'faiss' if self.use_faiss else 'numpy',
+            'faiss_available': self.faiss_matcher is not None,
             'total_icd_codes': len(self._icd_codes_cache) if self._icd_codes_cache else 0,
             'embeddings_shape': self._embeddings_cache.shape if self._embeddings_cache.size > 0 else 'empty',
             'cache_loaded': self._icd_codes_cache is not None and len(self._icd_codes_cache) > 0
         }
+        
+        # Add Faiss-specific information if available
+        if self.use_faiss and self.faiss_matcher is not None:
+            faiss_stats = self.faiss_matcher.get_index_stats()
+            base_info.update({
+                'faiss_stats': faiss_stats
+            })
+        
+        return base_info
+    
+    def benchmark_performance(self, num_queries: int = 50) -> Dict[str, Any]:
+        """
+        Benchmark performance of current search method
+        
+        Args:
+            num_queries: Number of test queries to run
+            
+        Returns:
+            Performance metrics
+        """
+        if self.use_faiss and self.faiss_matcher is not None:
+            return self.faiss_matcher.benchmark_search(num_queries)
+        else:
+            # Simple benchmark for numpy implementation
+            import time
+            
+            test_queries = ["chest pain", "diabetes", "hypertension", "pneumonia", "fever"]
+            
+            start_time = time.time()
+            for i in range(num_queries):
+                query = test_queries[i % len(test_queries)]
+                self.find_similar_icd_codes(query, top_k=5)
+            
+            total_time = time.time() - start_time
+            
+            return {
+                'search_method': 'numpy',
+                'num_queries': num_queries,
+                'total_time_seconds': total_time,
+                'avg_query_ms': (total_time / num_queries) * 1000,
+                'queries_per_second': num_queries / total_time
+            }

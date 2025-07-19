@@ -1,0 +1,11 @@
+{
+  "total_vectors": 1000,
+  "dimension": 1536,
+  "index_type": "HNSWFlat",
+  "build_time": 1752892417.115375,
+  "embeddings_shape": [
+    1000,
+    1536
+  ],
+  "faiss_version": "1.11.0"
+}

@@ -371,7 +371,7 @@ Return only the JSON object, no additional text."""
         
         return enhanced_result
     
-    def _find_entity_position(self, text: str, text_span: str, entity_text: str) -> Optional[Tuple[int, int]]:
+    def _find_entity_position(self, text: str, text_span: str, entity_text: str) -> Optional[tuple[int, int]]:
         """
         Find the position of an entity in the text
         
