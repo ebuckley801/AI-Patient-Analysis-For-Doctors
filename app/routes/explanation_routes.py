@@ -6,8 +6,8 @@ from app.services.pubmed_service import PubMedService
 from app.services.pubmed_cache_service import PubMedCacheService
 from app.services.uncertainty_service import UncertaintyCalculator
 from app.services.pathway_explorer import TreatmentPathwayExplorer
-from app.utils.validation import validate_request_data, require_fields
-from app.utils.sanitization import sanitize_input
+from app.utils.validation import require_fields
+from app.utils.sanitization import Sanitizer
 
 logger = logging.getLogger(__name__)
 explanation_bp = Blueprint('explanation', __name__, url_prefix='/api/explanation')
@@ -20,7 +20,7 @@ uncertainty_calculator = UncertaintyCalculator()
 pathway_explorer = TreatmentPathwayExplorer()
 
 @explanation_bp.route('/analyze', methods=['POST'])
-@validate_request_data(['note_text'])
+@require_fields(['note_text'])
 def explain_clinical_analysis():
     """
     Perform explainable clinical analysis
@@ -49,7 +49,7 @@ def explain_clinical_analysis():
         data = request.get_json()
         
         # Sanitize input
-        note_text = sanitize_input(data['note_text'])
+        note_text = Sanitizer.sanitize_patient_note(data['note_text'])
         patient_context = data.get('patient_context', {})
         explanation_depth = data.get('explanation_depth', 'detailed')
         include_literature = data.get('include_literature', True)
@@ -140,7 +140,7 @@ def get_literature_evidence(entity_id):
         }), 500
 
 @explanation_bp.route('/pathways', methods=['POST'])
-@validate_request_data(['primary_diagnosis'])
+@require_fields(['primary_diagnosis'])
 def explore_treatment_pathways():
     """
     Explore alternative treatment pathways for condition

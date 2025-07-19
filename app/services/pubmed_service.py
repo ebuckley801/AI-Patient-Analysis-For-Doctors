@@ -36,7 +36,7 @@ class PubMedService:
         self.api_key = getattr(Config, 'PUBMED_API_KEY', None)
         self.email = getattr(Config, 'PUBMED_EMAIL', 'patient-analysis@domain.com')
         self.tool_name = getattr(Config, 'PUBMED_TOOL_NAME', 'PatientAnalysis')
-        self.rate_limiter = RateLimiter(requests_per_second=9)
+        self.rate_limiter = RateLimiter(requests_per_second=3)
         
         # API endpoints
         self.endpoints = {

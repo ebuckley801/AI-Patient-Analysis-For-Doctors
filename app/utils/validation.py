@@ -223,6 +223,37 @@ def validate_json_request(schema_validator):
         return decorated_function
     return decorator
 
+
+def require_fields(required_fields: List[str]):
+    """Decorator to ensure specific fields are present in the JSON request body."""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            try:
+                data = request.get_json()
+                if data is None:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Request body must be valid JSON'
+                    }), 400
+
+                missing_fields = [field for field in required_fields if field not in data]
+                if missing_fields:
+                    return jsonify({
+                        'success': False,
+                        'error': f"Missing required fields: {', '.join(missing_fields)}"
+                    }), 400
+                
+                return f(*args, **kwargs)
+
+            except Exception as e:
+                return jsonify({
+                    'success': False,
+                    'error': 'Invalid request data'
+                }), 400
+        return decorated_function
+    return decorator
+
 def validate_query_params(**param_validators):
     """Decorator to validate query parameters"""
     def decorator(f):

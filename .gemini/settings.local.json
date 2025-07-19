@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(claude mcp:*)",
+      "Bash(grep:*)",
+      "mcp__filesystem__read_file",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__directory_tree",
+      "WebFetch(domain:www.ncbi.nlm.nih.gov)"
+    ],
+    "deny": []
+  }
+}
