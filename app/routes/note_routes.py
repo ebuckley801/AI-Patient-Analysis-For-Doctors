@@ -3,6 +3,7 @@ from flask_restx import Namespace, Resource, fields
 from app.services.supabase_service import SupabaseService
 from app.utils.validation import Validator
 from app.middleware.security import log_request, sanitize_middleware, require_content_type
+from flask_jwt_extended import jwt_required, get_jwt_identity # Import jwt_required
 
 note_ns = Namespace('notes', description='Note related operations')
 supabase_service = SupabaseService()
@@ -38,6 +39,7 @@ class NoteList(Resource):
     @note_ns.doc('list_notes')
     @note_ns.expect(note_ns.parser().add_argument('limit', type=int, help='Limit the number of results', default=100, location='args').add_argument('offset', type=int, help='Offset the results', default=0, location='args'))
     @note_ns.marshal_list_with(note_model)
+    @jwt_required() # Add JWT protection
     def get(self):
         """Get all notes with pagination"""
         try:
@@ -56,6 +58,7 @@ class NoteList(Resource):
     @log_request()
     @sanitize_middleware()
     @require_content_type('application/json')
+    @jwt_required() # Add JWT protection
     def post(self):
         """Create a new note"""
         try:
@@ -70,6 +73,7 @@ class NoteList(Resource):
 class Note(Resource):
     @note_ns.doc('get_note')
     @note_ns.marshal_with(note_model)
+    @jwt_required() # Add JWT protection
     def get(self, note_id):
         """Get a specific note by ID"""
         try:
@@ -83,6 +87,7 @@ class Note(Resource):
     @note_ns.doc('update_note')
     @note_ns.expect(note_update_model, validate=True)
     @note_ns.marshal_with(note_model)
+    @jwt_required() # Add JWT protection
     def put(self, note_id):
         """Update a specific note"""
         try:
@@ -98,6 +103,7 @@ class Note(Resource):
 
     @note_ns.doc('delete_note')
     @note_ns.response(204, 'Note deleted')
+    @jwt_required() # Add JWT protection
     def delete(self, note_id):
         """Delete a specific note"""
         try:
@@ -115,6 +121,7 @@ class NoteSearch(Resource):
     @note_ns.doc('search_notes')
     @note_ns.expect(note_ns.parser().add_argument('q', type=str, help='Search query', required=True, location='args').add_argument('field', type=str, help='Field to search (patient_note, patient_uid, gender)', default='patient_note', location='args'))
     @note_ns.marshal_list_with(note_model)
+    @jwt_required() # Add JWT protection
     def get(self):
         """Search notes by content"""
         try:
@@ -139,6 +146,7 @@ class NoteSearch(Resource):
 class NoteByPatient(Resource):
     @note_ns.doc('get_notes_by_patient')
     @note_ns.marshal_list_with(note_model)
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """Get all notes for a specific patient"""
         try:

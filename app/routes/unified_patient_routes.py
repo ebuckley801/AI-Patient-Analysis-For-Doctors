@@ -5,6 +5,7 @@ import concurrent.futures
 from datetime import datetime
 from typing import Dict, List, Any
 from flask_restx import Namespace, Resource, fields
+from flask_jwt_extended import jwt_required, get_jwt_identity # Import jwt_required
 
 from app.services.unified_patient_service import (
     UnifiedPatientService, QueryContext, UnifiedPatientView
@@ -232,6 +233,7 @@ class UnifiedPatientViewResource(Resource):
                         .add_argument('max_time', type=int, help='Maximum response time in seconds', default=10, location='args'))
     @unified_ns.marshal_with(unified_patient_view_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Get comprehensive unified patient view with intelligent data loading.
@@ -290,6 +292,7 @@ class PatientSummaryResource(Resource):
     @unified_ns.doc('get_patient_summary')
     @unified_ns.marshal_with(patient_summary_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Get quick patient summary for lists and searches.
@@ -328,6 +331,7 @@ class RefreshPatientDataResource(Resource):
     @unified_ns.expect(refresh_request_model, validate=True)
     @unified_ns.marshal_with(refresh_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self, patient_id):
         """
         Refresh patient data across all modalities.
@@ -375,6 +379,7 @@ class ClinicalReviewViewResource(Resource):
     @unified_ns.doc('get_clinical_review_view')
     @unified_ns.marshal_with(unified_patient_view_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Get patient view optimized for clinical review.
@@ -388,6 +393,7 @@ class EmergencyTriageViewResource(Resource):
     @unified_ns.doc('get_emergency_triage_view')
     @unified_ns.marshal_with(unified_patient_view_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Get patient view optimized for emergency triage.
@@ -401,6 +407,7 @@ class GeneticCounselingViewResource(Resource):
     @unified_ns.doc('get_genetic_counseling_view')
     @unified_ns.marshal_with(unified_patient_view_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Get patient view optimized for genetic counseling.
@@ -414,6 +421,7 @@ class TrialMatchingViewResource(Resource):
     @unified_ns.doc('get_trial_matching_view')
     @unified_ns.marshal_with(unified_patient_view_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Get patient view optimized for clinical trial matching.
@@ -427,6 +435,7 @@ class RiskAssessmentViewResource(Resource):
     @unified_ns.doc('get_risk_assessment_view')
     @unified_ns.marshal_with(unified_patient_view_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Get patient view optimized for comprehensive risk assessment.
@@ -444,6 +453,7 @@ class BatchPatientSummariesResource(Resource):
     @unified_ns.expect(batch_summary_request_model, validate=True)
     @unified_ns.marshal_with(batch_summary_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Get summaries for multiple patients efficiently.
@@ -521,6 +531,7 @@ class SearchPatientsResource(Resource):
     @unified_ns.expect(search_patients_request_model, validate=True)
     @unified_ns.marshal_with(search_patients_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Search for patients based on clinical criteria across all modalities.
@@ -566,6 +577,7 @@ class UnifiedHealthCheckResource(Resource):
     @unified_ns.doc('unified_health_check')
     @unified_ns.marshal_with(unified_health_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self):
         """
         Health check for unified patient service.
@@ -600,6 +612,7 @@ class GetUnifiedStatsResource(Resource):
     @unified_ns.doc('get_unified_stats')
     @unified_ns.marshal_with(unified_stats_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self):
         """
         Get unified patient service statistics.

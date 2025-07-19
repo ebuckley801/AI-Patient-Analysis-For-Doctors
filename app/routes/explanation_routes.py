@@ -1,6 +1,8 @@
 import logging
 from flask import request
 from flask_restx import Namespace, Resource, fields
+from flask_jwt_extended import jwt_required, get_jwt_identity # Import jwt_required
+
 from app.services.explainable_clinical_service import ExplainableClinicalService
 from app.services.pubmed_service import PubMedService
 from app.services.pubmed_cache_service import PubMedCacheService
@@ -149,7 +151,7 @@ cache_performance_model = explanation_ns.model('CachePerformance', {
     'total_entries': fields.Integer,
     'cache_hits': fields.Integer,
     'cache_misses': fields.Integer,
-    'cache_hit_ratio': fields.Float,
+    'hit_ratio': fields.Float,
     'expired_entries': fields.Integer,
     'last_cleanup': fields.String,
     'last_updated': fields.String
@@ -174,6 +176,7 @@ class ExplainClinicalAnalysis(Resource):
     @explanation_ns.doc('explain_clinical_analysis')
     @explanation_ns.expect(explain_analysis_request_model, validate=True)
     @explanation_ns.marshal_with(explain_analysis_response_model)
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Perform explainable clinical analysis.
@@ -219,6 +222,7 @@ class GetLiteratureEvidence(Resource):
                         .add_argument('max_results', type=int, help='Maximum number of articles', default=10, location='args')
                         .add_argument('study_type', type=str, help='Filter by study type', location='args'))
     @explanation_ns.marshal_with(literature_evidence_response_model)
+    @jwt_required() # Add JWT protection
     def get(self, entity_id):
         """
         Get literature evidence for specific clinical entity.
@@ -260,6 +264,7 @@ class ExploreTreatmentPathways(Resource):
     @explanation_ns.doc('explore_treatment_pathways')
     @explanation_ns.expect(treatment_pathway_request_model, validate=True)
     @explanation_ns.marshal_with(treatment_pathway_response_model)
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Explore alternative treatment pathways for a condition.
@@ -314,6 +319,7 @@ class GetUncertaintyAnalysis(Resource):
     @explanation_ns.expect(explanation_ns.parser()
                         .add_argument('include_visualization', type=bool, help='Include visualization data', default=False, location='args'))
     @explanation_ns.marshal_with(uncertainty_analysis_response_model)
+    @jwt_required() # Add JWT protection
     def get(self, analysis_id):
         """
         Get detailed uncertainty analysis for a previous analysis.

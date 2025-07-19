@@ -334,6 +334,7 @@ class ExtractClinicalEntities(Resource):
     @analysis_ns.expect(base_note_request_model, validate=True)
     @analysis_ns.marshal_with(base_analysis_result_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Extract clinical entities from patient note text.
@@ -437,6 +438,7 @@ class DiagnoseWithICDMappings(Resource):
     }), validate=True)
     @analysis_ns.marshal_with(diagnose_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Extract clinical entities and map them to ICD-10 codes.
@@ -488,6 +490,7 @@ class GetHighPriorityFindings(Resource):
                         .add_argument('include_details', type=bool, help='Include full entity details', default=False, location='args'))
     @analysis_ns.marshal_with(priority_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, note_id):
         """
         Get high-priority findings for a specific note.
@@ -589,6 +592,7 @@ class BatchAnalysis(Resource):
     @analysis_ns.expect(batch_analysis_request_model, validate=True)
     @analysis_ns.marshal_with(batch_analysis_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Process multiple patient notes for clinical analysis.
@@ -752,6 +756,7 @@ class BatchAnalysisAsync(Resource):
     @analysis_ns.expect(batch_async_request_model, validate=True)
     @analysis_ns.marshal_with(batch_async_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         High-performance async batch processing for large-scale clinical analysis.
@@ -821,6 +826,7 @@ class PriorityScan(Resource):
     @analysis_ns.expect(priority_scan_request_model, validate=True)
     @analysis_ns.marshal_with(priority_scan_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         High-speed priority scanning for identifying high-risk cases.
@@ -881,6 +887,7 @@ class ExtractClinicalEntitiesEnhanced(Resource):
     @analysis_ns.expect(enhanced_extract_request_model, validate=True)
     @analysis_ns.marshal_with(base_analysis_result_model) # Assuming enhanced returns similar structure
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Enhanced clinical entity extraction with Faiss + NLP integration.
@@ -961,6 +968,7 @@ class GetPerformanceStats(Resource):
     @analysis_ns.doc('get_performance_stats')
     @analysis_ns.marshal_with(performance_stats_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self):
         """
         Get comprehensive performance statistics for all analysis services.
@@ -1021,6 +1029,7 @@ class RunPerformanceBenchmark(Resource):
     @analysis_ns.expect(benchmark_request_model, validate=True)
     @analysis_ns.marshal_with(benchmark_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Run performance benchmark on enhanced analysis service.

@@ -1,10 +1,11 @@
-from flask import request, jsonify
+from flask import request
 import logging
 import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 from flask_restx import Namespace, Resource, fields
+from flask_jwt_extended import jwt_required, get_jwt_identity # Import jwt_required
 
 from app.services.multimodal_data_service import MultiModalDataService, DataIngestionResult
 from app.services.multimodal_vector_service import MultiModalVectorService, ModalityType
@@ -113,7 +114,7 @@ similar_patients_query_metadata_model = multimodal_ns.model('SimilarPatientsQuer
 
 find_similar_patients_request_model = multimodal_ns.model('FindSimilarPatientsRequest', {
     'query_patient_id': fields.String(required=True),
-    'target_modality': fields.String(required=True, enum=[mod.value for mod in ModalityType]),
+    'target_modality': fields.String(required=True, enum=[mod.value for mod in ModalityType])
     'source_modalities': fields.List(fields.String(enum=[mod.value for mod in ModalityType])),
     'top_k': fields.Integer(default=10),
     'min_similarity': fields.Float(default=0.1)
@@ -202,6 +203,7 @@ class IngestMimicData(Resource):
     @multimodal_ns.expect(ingest_request_model, validate=True)
     @multimodal_ns.marshal_with(ingestion_result_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Ingest MIMIC-IV critical care data.
@@ -257,6 +259,7 @@ class IngestBiobankData(Resource):
     @multimodal_ns.expect(ingest_request_model, validate=True)
     @multimodal_ns.marshal_with(ingestion_result_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Ingest UK Biobank genetic and lifestyle data.
@@ -306,6 +309,7 @@ class IngestFaersData(Resource):
     @multimodal_ns.expect(ingest_request_model, validate=True)
     @multimodal_ns.marshal_with(ingestion_result_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """Ingest FDA FAERS adverse event data
         """
@@ -342,6 +346,7 @@ class ResolvePatientIdentity(Resource):
     @multimodal_ns.expect(resolve_identity_request_model, validate=True)
     @multimodal_ns.marshal_with(identity_match_result_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Resolve patient identity across datasets.
@@ -378,6 +383,7 @@ class ValidatePatientIdentity(Resource):
     @multimodal_ns.expect(validate_identity_request_model, validate=True)
     @multimodal_ns.marshal_with(validate_identity_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Validate patient identity match.
@@ -416,6 +422,7 @@ class FindSimilarPatients(Resource):
     @multimodal_ns.expect(find_similar_patients_request_model, validate=True)
     @multimodal_ns.marshal_with(find_similar_patients_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Find patients similar to query patient across modalities.
@@ -497,6 +504,7 @@ class CrossModalPatientAnalysis(Resource):
                         .add_argument('include_insights', type=bool, help='Include AI-generated insights', default=True, location='args'))
     @multimodal_ns.marshal_with(cross_modal_analysis_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def get(self, patient_id):
         """
         Comprehensive cross-modal analysis for a patient.
@@ -545,6 +553,7 @@ class FetchClinicalTrials(Resource):
     @multimodal_ns.expect(fetch_trials_request_model, validate=True)
     @multimodal_ns.marshal_with(fetch_trials_response_model)
     @log_request()
+    @jwt_required() # Add JWT protection
     def post(self):
         """
         Fetch clinical trials from ClinicalTrials.gov API.
@@ -595,7 +604,8 @@ class MatchPatientToTrials(Resource):
     @multimodal_ns.expect(match_trials_request_model, validate=True)
     @multimodal_ns.marshal_with(match_trials_response_model)
     @log_request()
-    def post(self, patient_id):
+    @jwt_required() # Add JWT protection
+    def post(self):
         """
         Match patient to relevant clinical trials.
         """
@@ -681,7 +691,9 @@ class GetMultimodalStats(Resource):
     @multimodal_ns.marshal_with(multimodal_stats_response_model)
     @log_request()
     def get(self):
-        """Get comprehensive multi-modal service statistics"""
+        """
+        Get comprehensive multi-modal service statistics.
+        """
         if not services_available:
             multimodal_ns.abort(503, message='Multi-modal services not available', code='SERVICE_UNAVAILABLE')
         

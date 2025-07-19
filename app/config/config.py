@@ -16,4 +16,5 @@ class Config:
     
     # Flask config
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+    JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'super-secret-jwt-key') # Change this in production!
     DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
