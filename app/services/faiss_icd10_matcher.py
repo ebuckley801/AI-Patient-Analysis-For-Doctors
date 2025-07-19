@@ -50,7 +50,7 @@ class FaissICD10VectorMatcher:
         self.supabase_service = SupabaseService()
         
         # File paths for persistence
-        self.index_path = index_path or "faiss_icd10_index.bin"
+        self.index_path = index_path or "data/indexes/faiss_icd10_index.bin"
         self.metadata_path = self.index_path.replace('.bin', '_metadata.pkl')
         self.config_path = self.index_path.replace('.bin', '_config.json')
         
