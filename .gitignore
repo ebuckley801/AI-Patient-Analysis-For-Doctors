@@ -20,6 +20,4 @@ frontend/.vercel
 frontend/.turbo
 
 # Faiss Index Files (Generated)
-  faiss_icd10_index.bin
-  faiss_icd10_index_config.json
-  faiss_icd10_index_metadata.pkl
+data/indexes/*
