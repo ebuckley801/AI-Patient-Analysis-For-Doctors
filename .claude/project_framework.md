@@ -76,6 +76,7 @@
 3. **Security** - Input validation, sanitization, and secure API endpoints
 4. **Accuracy** - Confidence scoring and human review workflows
 5. **Maintainability** - Clean architecture with separation of concerns
+6. **BASH RULES** - Never run any bash scripts, only supply them for the user to run on their own
 
 ## Integration Points
 

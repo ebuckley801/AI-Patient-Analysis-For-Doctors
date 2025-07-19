@@ -12,14 +12,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union
 from decimal import Decimal
 
-from app.services.supabase_service import get_supabase_client
+from app.services.supabase_service import SupabaseService
 
 
 class AnalysisStorageService:
     """Service for storing and retrieving clinical analysis results"""
     
     def __init__(self):
-        self.supabase = get_supabase_client()
+        self.supabase = SupabaseService()
     
     def generate_session_id(self) -> str:
         """Generate a unique session ID for analysis tracking"""
@@ -71,7 +71,7 @@ class AnalysisStorageService:
                 'created_at': datetime.now().isoformat()
             }
             
-            result = self.supabase.table('analysis_sessions').insert(session_data).execute()
+            result = self.supabase.client.table('analysis_sessions').insert(session_data).execute()
             
             if result.data:
                 return session_id
@@ -88,7 +88,7 @@ class AnalysisStorageService:
             # Add updated timestamp
             updates['updated_at'] = datetime.now().isoformat()
             
-            result = self.supabase.table('analysis_sessions')\
+            result = self.supabase.client.table('analysis_sessions')\
                                  .update(updates)\
                                  .eq('session_id', session_id)\
                                  .execute()
@@ -132,7 +132,7 @@ class AnalysisStorageService:
                 entity_records.append(entity_record)
             
             if entity_records:
-                result = self.supabase.table('clinical_entities').insert(entity_records).execute()
+                result = self.supabase.client.table('clinical_entities').insert(entity_records).execute()
                 
                 if result.data:
                     return [record['id'] for record in result.data]
@@ -180,7 +180,7 @@ class AnalysisStorageService:
                 mapping_records.append(mapping_record)
             
             if mapping_records:
-                result = self.supabase.table('entity_icd_mappings').insert(mapping_records).execute()
+                result = self.supabase.client.table('entity_icd_mappings').insert(mapping_records).execute()
                 
                 if result.data:
                     return [record['id'] for record in result.data]
@@ -228,7 +228,7 @@ class AnalysisStorageService:
             }
             
             # Use upsert to handle potential duplicates
-            result = self.supabase.table('analysis_cache')\
+            result = self.supabase.client.table('analysis_cache')\
                                  .upsert(cache_record, on_conflict='cache_key')\
                                  .execute()
             
@@ -254,7 +254,7 @@ class AnalysisStorageService:
         try:
             cache_key = self.generate_cache_key(note_text, patient_context, analysis_type)
             
-            result = self.supabase.table('analysis_cache')\
+            result = self.supabase.client.table('analysis_cache')\
                                  .select('*')\
                                  .eq('cache_key', cache_key)\
                                  .gt('expires_at', datetime.now().isoformat())\
@@ -264,7 +264,7 @@ class AnalysisStorageService:
                 cache_record = result.data[0]
                 
                 # Update hit count and last accessed
-                self.supabase.table('analysis_cache')\
+                self.supabase.client.table('analysis_cache')\
                             .update({
                                 'hit_count': cache_record['hit_count'] + 1,
                                 'last_accessed': datetime.now().isoformat()
@@ -283,7 +283,7 @@ class AnalysisStorageService:
     def get_analysis_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve analysis session by ID"""
         try:
-            result = self.supabase.table('analysis_sessions')\
+            result = self.supabase.client.table('analysis_sessions')\
                                  .select('*')\
                                  .eq('session_id', session_id)\
                                  .execute()
@@ -300,7 +300,7 @@ class AnalysisStorageService:
     def get_session_entities(self, session_id: str) -> List[Dict[str, Any]]:
         """Retrieve all clinical entities for a session"""
         try:
-            result = self.supabase.table('clinical_entities')\
+            result = self.supabase.client.table('clinical_entities')\
                                  .select('*')\
                                  .eq('session_id', session_id)\
                                  .order('confidence', desc=True)\
@@ -315,7 +315,7 @@ class AnalysisStorageService:
     def get_entity_icd_mappings(self, entity_id: str) -> List[Dict[str, Any]]:
         """Retrieve ICD-10 mappings for a clinical entity"""
         try:
-            result = self.supabase.table('entity_icd_mappings')\
+            result = self.supabase.client.table('entity_icd_mappings')\
                                  .select('*')\
                                  .eq('entity_id', entity_id)\
                                  .order('rank_order')\
@@ -341,7 +341,7 @@ class AnalysisStorageService:
             List of analysis sessions with priority findings
         """
         try:
-            query = self.supabase.table('analysis_sessions')\
+            query = self.supabase.client.table('analysis_sessions')\
                                 .select('*')\
                                 .eq('status', 'completed')
             
@@ -376,7 +376,7 @@ class AnalysisStorageService:
         """Clean up expired cache entries and return count of deleted entries"""
         try:
             # Call the database function we created
-            result = self.supabase.rpc('cleanup_expired_cache').execute()
+            result = self.supabase.client.rpc('cleanup_expired_cache').execute()
             
             if result.data is not None:
                 return result.data
@@ -391,17 +391,17 @@ class AnalysisStorageService:
         """Get cache performance statistics"""
         try:
             # Get cache counts
-            total_result = self.supabase.table('analysis_cache')\
+            total_result = self.supabase.client.table('analysis_cache')\
                                       .select('id', count='exact')\
                                       .execute()
             
-            expired_result = self.supabase.table('analysis_cache')\
+            expired_result = self.supabase.client.table('analysis_cache')\
                                         .select('id', count='exact')\
                                         .lt('expires_at', datetime.now().isoformat())\
                                         .execute()
             
             # Get hit statistics
-            hits_result = self.supabase.table('analysis_cache')\
+            hits_result = self.supabase.client.table('analysis_cache')\
                                      .select('hit_count, analysis_type')\
                                      .execute()
             
