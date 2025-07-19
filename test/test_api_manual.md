@@ -214,7 +214,37 @@ curl -X POST http://localhost:5001/api/analysis/priority-scan \
   }'
 ```
 
-### 8. Cache and Storage Features (Phase 2)
+### 8. Enhanced Clinical Analysis with Faiss + NLP Integration (New!)
+```bash
+# Enhanced clinical entity extraction with Faiss vector search and advanced NLP
+curl -X POST http://localhost:5001/api/analysis/extract-enhanced \
+  -H "Content-Type: application/json" \
+  -d '{
+    "note_text": "Patient is a 65 y/o male with h/o DM, HTN who presents with c/o severe CP and SOB x 2 hours. Denies fever. BP 160/90, HR 110 bpm.",
+    "patient_context": {
+      "age": 65,
+      "gender": "male",
+      "medical_history": "diabetes, hypertension"
+    },
+    "include_icd_mapping": true,
+    "icd_top_k": 5,
+    "enable_nlp_preprocessing": true
+  }'
+
+# Get comprehensive performance statistics
+curl -X GET http://localhost:5001/api/analysis/performance-stats
+
+# Run performance benchmark comparing enhanced vs standard analysis
+curl -X POST http://localhost:5001/api/analysis/benchmark \
+  -H "Content-Type: application/json" \
+  -d '{
+    "num_tests": 10,
+    "include_enhanced": true,
+    "include_standard": true
+  }'
+```
+
+### 9. Cache and Storage Features (Phase 2)
 ```bash
 # Create intelligence layer database tables (run once)
 python app/utils/create_intelligence_db.py

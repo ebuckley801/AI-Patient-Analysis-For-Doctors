@@ -442,7 +442,7 @@ Return only the expanded text without explanation."""
             'search_method': 'faiss' if self.use_faiss else 'numpy',
             'faiss_available': self.faiss_matcher is not None,
             'total_icd_codes': len(self._icd_codes_cache) if self._icd_codes_cache else 0,
-            'embeddings_shape': self._embeddings_cache.shape if self._embeddings_cache.size > 0 else 'empty',
+            'embeddings_shape': self._embeddings_cache.shape if self._embeddings_cache is not None and self._embeddings_cache.size > 0 else 'empty',
             'cache_loaded': self._icd_codes_cache is not None and len(self._icd_codes_cache) > 0
         }
         

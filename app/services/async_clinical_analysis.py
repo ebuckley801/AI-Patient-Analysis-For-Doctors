@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import time
 
 from app.services.clinical_analysis_service import ClinicalAnalysisService
+from app.services.enhanced_clinical_analysis import EnhancedClinicalAnalysisService, create_enhanced_clinical_analysis_service
 from app.services.analysis_storage_service import AnalysisStorageService
 from app.services.icd10_vector_matcher import ICD10VectorMatcher
 
@@ -47,11 +48,38 @@ class BatchAnalysisConfig:
 class AsyncClinicalAnalysis:
     """Async clinical analysis service for high-performance batch processing"""
     
-    def __init__(self):
+    def __init__(self, use_enhanced_analysis: bool = True):
+        """
+        Initialize AsyncClinicalAnalysis service
+        
+        Args:
+            use_enhanced_analysis: Whether to use enhanced analysis with Faiss + NLP
+        """
+        # Try to use enhanced analysis service first
+        if use_enhanced_analysis:
+            self.enhanced_service = create_enhanced_clinical_analysis_service()
+            if self.enhanced_service:
+                self.use_enhanced = True
+                logger.info("✅ Using Enhanced Clinical Analysis with Faiss + NLP")
+            else:
+                self.use_enhanced = False
+                logger.warning("⚠️ Enhanced service failed, falling back to standard analysis")
+        else:
+            self.enhanced_service = None
+            self.use_enhanced = False
+        
+        # Fallback services (always initialize for compatibility)
         self.clinical_service = ClinicalAnalysisService()
         self.storage_service = AnalysisStorageService()
         self.icd_matcher = ICD10VectorMatcher()
         self.executor = ThreadPoolExecutor(max_workers=20)
+        
+        # Performance tracking
+        self.batch_stats = {
+            'total_batches': 0,
+            'enhanced_analyses': 0,
+            'standard_analyses': 0
+        }
     
     async def analyze_note_async(self, note_data: Dict[str, Any], config: BatchAnalysisConfig) -> BatchAnalysisResult:
         """
@@ -130,14 +158,42 @@ class AsyncClinicalAnalysis:
                 except Exception as cache_error:
                     logger.warning(f"Cache lookup failed for {note_id}: {cache_error}")
             
-            # Run clinical analysis in thread pool to avoid blocking
+            # Run clinical analysis using enhanced service if available
             loop = asyncio.get_event_loop()
-            analysis_result = await loop.run_in_executor(
-                self.executor,
-                self.clinical_service.extract_clinical_entities,
-                note_text,
-                patient_context
-            )
+            
+            if self.use_enhanced and self.enhanced_service:
+                # Use enhanced analysis with Faiss + NLP integration
+                analysis_result = await loop.run_in_executor(
+                    self.executor,
+                    self.enhanced_service.extract_clinical_entities_enhanced,
+                    note_text,
+                    patient_context,
+                    config.include_icd_mapping,  # include_icd_mapping
+                    5,  # icd_top_k
+                    True  # enable_nlp_preprocessing
+                )
+                self.batch_stats['enhanced_analyses'] += 1
+            else:
+                # Fallback to standard analysis
+                analysis_result = await loop.run_in_executor(
+                    self.executor,
+                    self.clinical_service.extract_clinical_entities,
+                    note_text,
+                    patient_context
+                )
+                
+                # Add ICD mapping if requested and not using enhanced service
+                if config.include_icd_mapping:
+                    try:
+                        analysis_result = await loop.run_in_executor(
+                            self.executor,
+                            self.icd_matcher.map_clinical_entities_to_icd,
+                            analysis_result
+                        )
+                    except Exception as icd_error:
+                        logger.warning(f"ICD mapping failed for {note_id}: {icd_error}")
+                
+                self.batch_stats['standard_analyses'] += 1
             
             # Check for analysis errors
             if 'error' in analysis_result:
@@ -154,18 +210,6 @@ class AsyncClinicalAnalysis:
                     error=analysis_result['error'],
                     session_id=session_id
                 )
-            
-            # Add ICD mapping if requested
-            if config.include_icd_mapping:
-                try:
-                    analysis_result = await loop.run_in_executor(
-                        self.executor,
-                        self.icd_matcher.map_clinical_entities_to_icd,
-                        analysis_result
-                    )
-                except Exception as icd_error:
-                    logger.warning(f"ICD mapping failed for {note_id}: {icd_error}")
-                    # Continue without ICD mapping
             
             # Store results if storage enabled
             if config.include_storage and session_id:

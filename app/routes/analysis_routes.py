@@ -3,6 +3,7 @@ import logging
 import asyncio
 from datetime import datetime
 from app.services.clinical_analysis_service import ClinicalAnalysisService
+from app.services.enhanced_clinical_analysis import EnhancedClinicalAnalysisService, create_enhanced_clinical_analysis_service
 from app.services.icd10_vector_matcher import ICD10VectorMatcher
 from app.services.analysis_storage_service import AnalysisStorageService
 from app.services.async_clinical_analysis import AsyncClinicalAnalysis, BatchAnalysisConfig
@@ -19,9 +20,10 @@ analysis_bp = Blueprint('analysis', __name__)
 
 # Initialize services
 clinical_service = ClinicalAnalysisService()
+enhanced_service = create_enhanced_clinical_analysis_service()
 icd_matcher = ICD10VectorMatcher()
 storage_service = AnalysisStorageService()
-async_clinical_service = AsyncClinicalAnalysis()
+async_clinical_service = AsyncClinicalAnalysis(use_enhanced_analysis=True)
 
 @analysis_bp.route('/extract', methods=['POST'])
 @log_request()
@@ -961,6 +963,301 @@ def priority_scan():
             'details': str(e),
             'code': 'INTERNAL_ERROR'
         }), 500
+
+@analysis_bp.route('/extract-enhanced', methods=['POST'])
+@log_request()
+def extract_clinical_entities_enhanced():
+    """
+    Enhanced clinical entity extraction with Faiss + NLP integration
+    
+    Request body:
+    {
+        "note_text": "Patient note content",
+        "patient_context": {  // Optional
+            "age": 45,
+            "gender": "M",
+            "medical_history": "hypertension, diabetes"
+        },
+        "include_icd_mapping": true,  // Optional, default true
+        "icd_top_k": 5,  // Optional, default 5
+        "enable_nlp_preprocessing": true  // Optional, default true
+    }
+    
+    Returns enhanced analysis with performance metrics and NLP analysis
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid JSON in request body',
+                'code': 'INVALID_JSON'
+            }), 400
+        
+        # Validate required fields
+        if 'note_text' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'note_text is required',
+                'code': 'MISSING_NOTE_TEXT'
+            }), 400
+        
+        note_text = Sanitizer.sanitize_text(data['note_text'])
+        patient_context = data.get('patient_context', {})
+        include_icd_mapping = data.get('include_icd_mapping', True)
+        icd_top_k = data.get('icd_top_k', 5)
+        enable_nlp_preprocessing = data.get('enable_nlp_preprocessing', True)
+        
+        if len(note_text.strip()) < 5:
+            return jsonify({
+                'success': False,
+                'error': 'Note text is too short (minimum 5 characters)',
+                'code': 'NOTE_TOO_SHORT'
+            }), 400
+        
+        logger.info(f"Enhanced extraction request: {len(note_text)} chars, ICD mapping: {include_icd_mapping}")
+        
+        # Use enhanced service if available, fallback to standard
+        if enhanced_service:
+            result = enhanced_service.extract_clinical_entities_enhanced(
+                note_text,
+                patient_context=patient_context,
+                include_icd_mapping=include_icd_mapping,
+                icd_top_k=icd_top_k,
+                enable_nlp_preprocessing=enable_nlp_preprocessing
+            )
+        else:
+            # Fallback to standard analysis
+            result = clinical_service.extract_clinical_entities(note_text, patient_context)
+            if include_icd_mapping:
+                result = icd_matcher.map_clinical_entities_to_icd(result)
+            result['enhanced_service_available'] = False
+        
+        if 'error' in result:
+            return jsonify({
+                'success': False,
+                'error': 'Enhanced clinical analysis failed',
+                'details': result['error'],
+                'code': 'ENHANCED_ANALYSIS_FAILED'
+            }), 500
+        
+        # Store in database if storage is enabled
+        try:
+            if storage_service and data.get('note_id') and data.get('patient_id'):
+                session_id = storage_service.create_analysis_session(
+                    note_id=data['note_id'],
+                    patient_id=data['patient_id'],
+                    analysis_type='enhanced_extract',
+                    request_data=data
+                )
+                
+                # Store entities if found
+                all_entities = []
+                for entity_type in ['symptoms', 'conditions', 'medications', 'vital_signs', 'procedures', 'abnormal_findings']:
+                    for entity in result.get(entity_type, []):
+                        entity_with_type = entity.copy()
+                        entity_with_type['type'] = entity_type[:-1] if entity_type.endswith('s') else entity_type
+                        all_entities.append(entity_with_type)
+                
+                if all_entities:
+                    storage_service.store_clinical_entities(session_id, all_entities)
+                
+                # Update session
+                assessment = result.get('overall_assessment', {})
+                storage_service.update_analysis_session(session_id, {
+                    'status': 'completed',
+                    'response_data': result,
+                    'risk_level': assessment.get('risk_level', 'low'),
+                    'requires_immediate_attention': assessment.get('requires_immediate_attention', False)
+                })
+                
+                result['session_id'] = session_id
+                
+        except Exception as storage_error:
+            logger.warning(f"Storage failed: {storage_error}")
+            # Continue without storage
+        
+        return jsonify({
+            'success': True,
+            'data': result
+        })
+        
+    except ValidationError as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'code': 'VALIDATION_ERROR'
+        }), 400
+    except Exception as e:
+        logger.error(f"Error in enhanced extraction: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error during enhanced analysis',
+            'details': str(e),
+            'code': 'INTERNAL_ERROR'
+        }), 500
+
+
+@analysis_bp.route('/performance-stats', methods=['GET'])
+@log_request()
+def get_performance_stats():
+    """
+    Get comprehensive performance statistics for all analysis services
+    
+    Returns performance metrics including Faiss/numpy usage, timing, and service status
+    """
+    try:
+        stats = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'services': {}
+        }
+        
+        # Enhanced service stats
+        if enhanced_service:
+            enhanced_stats = enhanced_service.get_performance_stats()
+            stats['services']['enhanced_analysis'] = {
+                **enhanced_stats,
+                'available': True
+            }
+        else:
+            stats['services']['enhanced_analysis'] = {
+                'available': False,
+                'reason': 'Enhanced service initialization failed'
+            }
+        
+        # ICD matcher stats
+        try:
+            icd_stats = icd_matcher.get_cache_info()
+            if hasattr(icd_matcher, 'benchmark_performance'):
+                benchmark = icd_matcher.benchmark_performance(num_queries=5)
+                icd_stats['benchmark'] = benchmark
+            stats['services']['icd_matcher'] = icd_stats
+        except Exception as e:
+            stats['services']['icd_matcher'] = {'error': str(e)}
+        
+        # Async service stats
+        try:
+            async_stats = {
+                'total_batches': async_clinical_service.batch_stats['total_batches'],
+                'enhanced_analyses': async_clinical_service.batch_stats['enhanced_analyses'],
+                'standard_analyses': async_clinical_service.batch_stats['standard_analyses'],
+                'enhanced_service_active': async_clinical_service.use_enhanced
+            }
+            stats['services']['async_analysis'] = async_stats
+        except Exception as e:
+            stats['services']['async_analysis'] = {'error': str(e)}
+        
+        # Storage service stats
+        try:
+            storage_stats = storage_service.get_cache_statistics()
+            stats['services']['storage'] = storage_stats
+        except Exception as e:
+            stats['services']['storage'] = {'error': str(e)}
+        
+        return jsonify({
+            'success': True,
+            'data': stats
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting performance stats: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to retrieve performance statistics',
+            'details': str(e),
+            'code': 'STATS_ERROR'
+        }), 500
+
+
+@analysis_bp.route('/benchmark', methods=['POST'])
+@log_request()
+def run_performance_benchmark():
+    """
+    Run performance benchmark on enhanced analysis service
+    
+    Request body:
+    {
+        "num_tests": 10,  // Optional, default 10
+        "include_enhanced": true,  // Optional, default true
+        "include_standard": true   // Optional, default true
+    }
+    
+    Returns comprehensive benchmark results
+    """
+    try:
+        data = request.get_json() if request.get_json() else {}
+        
+        num_tests = min(data.get('num_tests', 10), 50)  # Cap at 50 for safety
+        include_enhanced = data.get('include_enhanced', True)
+        include_standard = data.get('include_standard', True)
+        
+        benchmark_results = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'num_tests': num_tests,
+            'results': {}
+        }
+        
+        # Enhanced service benchmark
+        if include_enhanced and enhanced_service:
+            logger.info(f"Running enhanced analysis benchmark ({num_tests} tests)")
+            enhanced_benchmark = enhanced_service.benchmark_enhanced_analysis(num_tests)
+            benchmark_results['results']['enhanced_analysis'] = enhanced_benchmark
+        
+        # Standard service benchmark
+        if include_standard:
+            logger.info(f"Running standard analysis benchmark ({num_tests} tests)")
+            
+            import time
+            test_note = "Patient presents with chest pain and shortness of breath. BP 160/90, HR 110."
+            test_context = {'age': 55, 'gender': 'male'}
+            
+            standard_times = []
+            total_start = time.time()
+            
+            for i in range(num_tests):
+                start = time.time()
+                result = clinical_service.extract_clinical_entities(test_note, test_context)
+                duration = (time.time() - start) * 1000
+                standard_times.append(duration)
+            
+            total_time = time.time() - total_start
+            
+            benchmark_results['results']['standard_analysis'] = {
+                'num_tests': num_tests,
+                'total_time_seconds': total_time,
+                'avg_time_per_analysis_ms': sum(standard_times) / len(standard_times),
+                'min_time_ms': min(standard_times),
+                'max_time_ms': max(standard_times),
+                'analyses_per_second': num_tests / total_time,
+                'individual_times_ms': standard_times
+            }
+        
+        # Performance comparison
+        if include_enhanced and include_standard and enhanced_service:
+            enhanced_avg = benchmark_results['results']['enhanced_analysis']['avg_time_per_analysis_ms']
+            standard_avg = benchmark_results['results']['standard_analysis']['avg_time_per_analysis_ms']
+            
+            benchmark_results['performance_comparison'] = {
+                'enhanced_faster': enhanced_avg < standard_avg,
+                'speedup_factor': standard_avg / enhanced_avg if enhanced_avg > 0 else 'N/A',
+                'time_difference_ms': standard_avg - enhanced_avg
+            }
+        
+        return jsonify({
+            'success': True,
+            'data': benchmark_results
+        })
+        
+    except Exception as e:
+        logger.error(f"Error running benchmark: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Benchmark failed',
+            'details': str(e),
+            'code': 'BENCHMARK_ERROR'
+        }), 500
+
 
 # Error handlers for the blueprint
 @analysis_bp.errorhandler(404)

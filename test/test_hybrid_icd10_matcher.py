@@ -83,9 +83,8 @@ class TestHybridICD10VectorMatcher(unittest.TestCase):
             data=self.sample_icd_data
         )
         
-        # Force Faiss to fail by patching the import
-        with patch('app.services.icd10_vector_matcher.create_faiss_icd10_matcher', side_effect=ImportError("Faiss not available")):
-            matcher = ICD10VectorMatcher()
+        # Force Faiss to fail by creating with force_numpy=True
+        matcher = ICD10VectorMatcher(force_numpy=True)
         
         # Should fall back to numpy
         self.assertFalse(matcher.use_faiss)
