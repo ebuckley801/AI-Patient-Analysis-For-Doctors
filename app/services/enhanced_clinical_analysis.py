@@ -48,6 +48,28 @@ class EnhancedClinicalAnalysisService:
             'avg_icd_search_time_ms': 0
         }
         
+        # Simple embedding cache to avoid duplicate API calls
+        self.embedding_cache = {}
+        
+        # Medical synonyms for better ICD matching (class-level for performance)
+        self.medical_synonyms = {
+            'ARDS': ['Acute respiratory distress syndrome', 'Adult respiratory distress syndrome'],
+            'COVID-19': ['COVID 19', 'SARS-CoV-2 infection', 'Coronavirus disease', 'novel coronavirus'],
+            'DYSPNEA': ['shortness of breath', 'difficulty breathing', 'breathing difficulty'],
+            'FEVER': ['pyrexia', 'elevated temperature', 'hyperthermia'],
+            'COUGH': ['coughing', 'tussis'],
+            'PNEUMONIA': ['lung infection', 'pulmonary infection'],
+            'SEPSIS': ['septicemia', 'blood poisoning'],
+            'HYPERTENSION': ['high blood pressure', 'elevated blood pressure'],
+            'DIABETES': ['diabetes mellitus', 'DM'],
+            'MI': ['myocardial infarction', 'heart attack'],
+            'CHF': ['congestive heart failure', 'heart failure'],
+            'COPD': ['chronic obstructive pulmonary disease', 'chronic airway obstruction'],
+            'DVT': ['deep vein thrombosis', 'venous thrombosis'],
+            'PE': ['pulmonary embolism', 'lung embolism'],
+            'UTI': ['urinary tract infection', 'bladder infection']
+        }
+        
         logger.info(f"✅ Enhanced Clinical Analysis Service initialized")
         logger.info(f"📊 NLP Processor: {'✅ Active' if self.nlp_processor else '❌ Failed'}")
         logger.info(f"🔍 ICD Search Method: {'Faiss' if self.icd_matcher.use_faiss else 'Numpy'}")
@@ -104,6 +126,10 @@ class EnhancedClinicalAnalysisService:
             result = self._parse_claude_response(response.content[0].text)
             extraction_time = (time.time() - extraction_start) * 1000
             
+            # Debug: Log what Claude actually returned
+            logger.info(f"Raw Claude response: {response.content[0].text}")
+            logger.info(f"Parsed result before NLP enhancement: {json.dumps(result, indent=2)}")
+            
             # Phase 3: NLP Enhancement
             nlp_enhancement_start = time.time()
             
@@ -134,7 +160,6 @@ class EnhancedClinicalAnalysisService:
                 'model_version': "claude-3-5-sonnet-20241022",
                 'nlp_enhanced': enable_nlp_preprocessing,
                 'icd_search_method': 'faiss' if self.icd_matcher.use_faiss else 'numpy',
-                'icd_mappings': icd_mapping_results,
                 'performance_metrics': {
                     'total_time_ms': round(total_time, 2),
                     'preprocessing_time_ms': round(preprocessing_time, 2),
@@ -145,6 +170,10 @@ class EnhancedClinicalAnalysisService:
                     'chars_preprocessed': len(preprocessed_note) if enable_nlp_preprocessing else len(patient_note)
                 }
             })
+            
+            # Only add ICD mappings if requested
+            if include_icd_mapping:
+                result['icd_mappings'] = icd_mapping_results
             
             # Update global stats
             self._update_performance_stats(total_time, icd_mapping_time)
@@ -387,6 +416,9 @@ Return ONLY valid JSON in this exact format:
                 confidence_modifier = uncertainty_result.get('confidence_modifier', 0)
                 enhanced['confidence'] = max(0.1, original_confidence + confidence_modifier)
         
+        # Always standardize entity structure, regardless of whether we found position
+        enhanced = self._standardize_entity_structure(enhanced, original_text, entity_pos)
+        
         return enhanced
     
     def _find_entity_position(self, text: str, text_span: str, entity_text: str) -> Optional[Tuple[int, int]]:
@@ -433,17 +465,37 @@ Return ONLY valid JSON in this exact format:
         icd_mappings = []
         
         try:
+            # Quick ICD matcher status check
+            cache_info = self.icd_matcher.get_cache_info()
+            logger.info(f"🔍 ICD Search: {cache_info.get('search_method', 'unknown')} ({cache_info.get('total_icd_codes', 0)} codes loaded)")
+            
             # Map conditions (highest priority)
             for condition in analysis_result.get('conditions', []):
+                # Defensive check: ensure condition is a dictionary
+                if not isinstance(condition, dict):
+                    logger.warning(f"⚠️ Skipping non-dict condition: {condition}")
+                    continue
+                    
                 entity_text = condition.get('entity', '')
                 if entity_text:
-                    enhanced_text = self._prepare_entity_for_icd_search(condition, use_nlp_context)
+                    # Try multiple search strategies for better matching
+                    icd_matches = self._smart_icd_search(entity_text, condition, top_k, 'condition')
+                    search_time = 0  # Measured inside _smart_icd_search
                     
-                    search_start = time.time()
-                    icd_matches = self.icd_matcher.find_similar_icd_codes(
-                        enhanced_text, top_k=top_k, min_similarity=0.1
-                    )
-                    search_time = (time.time() - search_start) * 1000
+                    # Safe logging with type checking
+                    try:
+                        match_info = []
+                        for m in icd_matches[:3]:
+                            if isinstance(m, dict):
+                                code = m.get('code', 'No code')
+                                similarity = m.get('similarity', 0)
+                                match_info.append(f"{code} ({round(similarity*100)}%)")
+                            else:
+                                match_info.append(f"Invalid match type: {type(m)}")
+                        logger.info(f"🔍 Found {len(icd_matches)} ICD matches for condition '{entity_text}': {match_info}")
+                    except Exception as log_error:
+                        logger.error(f"❌ Error logging condition matches: {log_error}")
+                        logger.info(f"🔍 Found {len(icd_matches)} ICD matches for condition '{entity_text}' (details unavailable)")
                     
                     # Track search method
                     if self.icd_matcher.use_faiss:
@@ -462,7 +514,7 @@ Return ONLY valid JSON in this exact format:
                             'best_match': icd_matches[0] if icd_matches else None,
                             'search_method': 'faiss' if self.icd_matcher.use_faiss else 'numpy',
                             'search_time_ms': round(search_time, 2),
-                            'enhanced_query': enhanced_text != entity_text
+                            'enhanced_query': False  # Will be set by smart search if used
                         }
                         
                         # Add NLP context if available
@@ -475,15 +527,30 @@ Return ONLY valid JSON in this exact format:
             
             # Map symptoms (secondary priority)
             for symptom in analysis_result.get('symptoms', []):
+                # Defensive check: ensure symptom is a dictionary
+                if not isinstance(symptom, dict):
+                    logger.warning(f"⚠️ Skipping non-dict symptom: {symptom}")
+                    continue
+                    
                 entity_text = symptom.get('entity', '')
                 if entity_text and not symptom.get('negated', False):  # Skip negated symptoms
-                    enhanced_text = self._prepare_entity_for_icd_search(symptom, use_nlp_context)
+                    # Try multiple search strategies for better matching
+                    icd_matches = self._smart_icd_search(entity_text, symptom, min(top_k, 3), 'symptom')
                     
-                    search_start = time.time()
-                    icd_matches = self.icd_matcher.find_similar_icd_codes(
-                        enhanced_text, top_k=min(top_k, 3), min_similarity=0.15  # Higher threshold for symptoms
-                    )
-                    search_time = (time.time() - search_start) * 1000
+                    # Safe logging with type checking
+                    try:
+                        match_info = []
+                        for m in icd_matches[:3]:
+                            if isinstance(m, dict):
+                                code = m.get('code', 'No code')
+                                similarity = m.get('similarity', 0)
+                                match_info.append(f"{code} ({round(similarity*100)}%)")
+                            else:
+                                match_info.append(f"Invalid match type: {type(m)}")
+                        logger.info(f"🔍 Found {len(icd_matches)} ICD matches for symptom '{entity_text}': {match_info}")
+                    except Exception as log_error:
+                        logger.error(f"❌ Error logging symptom matches: {log_error}")
+                        logger.info(f"🔍 Found {len(icd_matches)} ICD matches for symptom '{entity_text}' (details unavailable)")
                     
                     if icd_matches:
                         mapping = {
@@ -495,7 +562,7 @@ Return ONLY valid JSON in this exact format:
                             'best_match': icd_matches[0] if icd_matches else None,
                             'search_method': 'faiss' if self.icd_matcher.use_faiss else 'numpy',
                             'search_time_ms': round(search_time, 2),
-                            'enhanced_query': enhanced_text != entity_text
+                            'enhanced_query': False  # Will be set by smart search if used
                         }
                         icd_mappings.append(mapping)
             
@@ -503,7 +570,9 @@ Return ONLY valid JSON in this exact format:
             return icd_mappings
             
         except Exception as e:
+            import traceback
             logger.error(f"❌ ICD mapping failed: {e}")
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             return []
     
     def _prepare_entity_for_icd_search(self, entity: Dict[str, Any], use_nlp_context: bool) -> str:
@@ -532,10 +601,15 @@ Return ONLY valid JSON in this exact format:
         # Add temporal context
         if 'temporal' in entity:
             temporal_info = entity['temporal']
-            if temporal_info.get('onset'):
-                search_terms.append(f"{temporal_info['onset']} {base_text}")
-            if temporal_info.get('progression') and temporal_info['progression'] != 'stable':
-                search_terms.append(f"{temporal_info['progression']} {base_text}")
+            # Handle both string and dict temporal info
+            if isinstance(temporal_info, dict):
+                if temporal_info.get('onset'):
+                    search_terms.append(f"{temporal_info['onset']} {base_text}")
+                if temporal_info.get('progression') and temporal_info['progression'] != 'stable':
+                    search_terms.append(f"{temporal_info['progression']} {base_text}")
+            elif isinstance(temporal_info, str) and temporal_info not in ['unknown', 'unspecified']:
+                # Use string temporal info directly
+                search_terms.append(f"{temporal_info} {base_text}")
         
         # Add status context for conditions
         if entity.get('status') and entity['status'] in ['chronic', 'acute']:
@@ -670,6 +744,196 @@ Return ONLY valid JSON in this exact format:
             'individual_times_ms': individual_times,
             'performance_stats': self.get_performance_stats()
         }
+    
+    def _standardize_entity_structure(self, entity: Dict[str, Any], original_text: str, 
+                                      entity_position: Optional[Tuple[int, int]] = None) -> Dict[str, Any]:
+        """
+        Standardize entity structure to ensure consistent field mapping
+        
+        Args:
+            entity: Original entity from Claude response
+            original_text: Full text for position lookup
+            entity_position: Optional position tuple (start, end)
+            
+        Returns:
+            Standardized entity with consistent field names
+        """
+        standardized = entity.copy()
+        
+        # Ensure we have a 'text' field with the actual entity text
+        entity_text = entity.get('entity', '') or entity.get('text_span', '') or entity.get('text', '')
+        
+        if entity_text:
+            standardized['text'] = entity_text
+            
+            # If we have position info, use it; otherwise try to find it
+            if entity_position:
+                start, end = entity_position
+                standardized['start'] = start
+                standardized['end'] = end
+                # Verify the text matches the position
+                try:
+                    extracted_text = original_text[start:end]
+                    if extracted_text.strip() == entity_text.strip():
+                        standardized['text'] = extracted_text
+                except:
+                    pass
+            else:
+                # Try to find the entity in the text
+                try:
+                    start_pos = original_text.lower().find(entity_text.lower())
+                    if start_pos != -1:
+                        standardized['start'] = start_pos
+                        standardized['end'] = start_pos + len(entity_text)
+                    else:
+                        standardized['start'] = 0
+                        standardized['end'] = 0
+                except:
+                    standardized['start'] = 0
+                    standardized['end'] = 0
+        else:
+            # If no entity text found, mark as empty
+            standardized['text'] = 'Unknown entity'
+            standardized['start'] = 0
+            standardized['end'] = 0
+            
+        # Ensure other required fields exist
+        if 'confidence' not in standardized:
+            standardized['confidence'] = 0.5
+            
+        if 'type' not in standardized:
+            standardized['type'] = 'unknown'
+            
+        return standardized
+    
+    def _smart_icd_search(self, entity_text: str, entity_data: Dict[str, Any], top_k: int, entity_type: str) -> List[Dict[str, Any]]:
+        """
+        Smart ICD search using multiple strategies and thresholds
+        
+        Args:
+            entity_text: Original entity text
+            entity_data: Full entity data with metadata
+            top_k: Number of results to return
+            entity_type: 'condition' or 'symptom'
+            
+        Returns:
+            List of ICD matches using best available strategy
+        """
+        
+        # Optimized search: try best strategies first with reasonable thresholds
+        # Priority order: synonyms (best match potential) → clean → original → enhanced
+        strategy_priority = []
+        
+        # Add synonyms first (highest match potential)
+        clean_upper = self._clean_medical_term(entity_text).upper()
+        if clean_upper in self.medical_synonyms:
+            for synonym in self.medical_synonyms[clean_upper]:
+                strategy_priority.append(('synonym', synonym))
+        
+        # Add clean term (removes modifiers)
+        clean_term = self._clean_medical_term(entity_text)
+        strategy_priority.append(('clean', clean_term))
+        
+        # Add original if different
+        if clean_term != entity_text:
+            strategy_priority.append(('original', entity_text))
+        
+        # Enhanced as fallback (often too specific)
+        enhanced_text = self._prepare_entity_for_icd_search(entity_data, True)
+        if enhanced_text not in [term for _, term in strategy_priority]:
+            strategy_priority.append(('enhanced', enhanced_text))
+        
+        # Use higher, more selective thresholds
+        thresholds = [0.6, 0.4, 0.2] if entity_type == 'condition' else [0.5, 0.3, 0.15]
+        
+        for strategy, search_term in strategy_priority:
+            for threshold in thresholds:
+                try:
+                    logger.info(f"🔍 Trying {strategy} search for '{entity_text}' → '{search_term}' (threshold: {threshold})")
+                    
+                    matches = self._cached_icd_search(search_term, top_k, threshold)
+                    
+                    if matches and len(matches) > 0:
+                        # Add strategy info to results
+                        for match in matches:
+                            match['search_strategy'] = strategy
+                            match['search_term'] = search_term
+                            match['threshold_used'] = threshold
+                        
+                        logger.info(f"✅ Success with {strategy} strategy: {len(matches)} matches (similarity: {matches[0].get('similarity', 0)*100:.1f}%+)")
+                        return matches
+                        
+                except Exception as e:
+                    logger.warning(f"Search failed for {strategy} '{search_term}': {e}")
+                    continue
+        
+        logger.info(f"❌ No matches found for '{entity_text}' with any strategy")
+        return []
+    
+    def _clean_medical_term(self, term: str) -> str:
+        """
+        Clean medical terms by removing severity modifiers and extra words
+        
+        Args:
+            term: Original medical term
+            
+        Returns:
+            Cleaned term more likely to match ICD codes
+        """
+        # Remove common modifiers
+        modifiers_to_remove = [
+            'severe', 'moderate', 'mild', 'acute', 'chronic', 'recurrent',
+            'persistent', 'intermittent', 'progressive', 'stable',
+            'new onset', 'recent', 'longstanding', 'refractory'
+        ]
+        
+        cleaned = term.lower().strip()
+        
+        for modifier in modifiers_to_remove:
+            # Remove modifier at start of term
+            if cleaned.startswith(modifier + ' '):
+                cleaned = cleaned[len(modifier):].strip()
+            # Remove modifier at end of term  
+            if cleaned.endswith(' ' + modifier):
+                cleaned = cleaned[:-len(modifier)].strip()
+        
+        return cleaned.title()  # Return with proper capitalization
+    
+    def _cached_icd_search(self, search_term: str, top_k: int, min_similarity: float) -> List[Dict[str, Any]]:
+        """
+        Cached ICD search to avoid duplicate API calls for embeddings
+        
+        Args:
+            search_term: Term to search for
+            top_k: Number of results
+            min_similarity: Minimum similarity threshold
+            
+        Returns:
+            List of ICD matches
+        """
+        # Create cache key
+        cache_key = f"{search_term.lower()}_{top_k}_{min_similarity}"
+        
+        # Check cache first
+        if cache_key in self.embedding_cache:
+            logger.info(f"🔄 Using cached result for '{search_term}'")
+            return self.embedding_cache[cache_key]
+        
+        # Perform search and cache result
+        try:
+            matches = self.icd_matcher.find_similar_icd_codes(
+                search_term, top_k=top_k, min_similarity=min_similarity
+            )
+            
+            # Cache the result (limit cache size to prevent memory issues)
+            if len(self.embedding_cache) < 100:
+                self.embedding_cache[cache_key] = matches
+            
+            return matches
+            
+        except Exception as e:
+            logger.error(f"Cached ICD search failed for '{search_term}': {e}")
+            return []
 
 
 def create_enhanced_clinical_analysis_service(force_numpy_icd: bool = False) -> Optional[EnhancedClinicalAnalysisService]:

@@ -5,6 +5,9 @@ tqdm
 pytest
 pytest-cov
 flask
+flask-cors
+flask-restx
+flask-jwt-extended
 bleach
 anthropic
 numpy

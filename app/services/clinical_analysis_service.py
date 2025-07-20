@@ -46,8 +46,15 @@ class ClinicalAnalysisService:
             
             result = self._parse_claude_response(response.content[0].text)
             
+            # Debug: Log what Claude actually returned
+            logger.info(f"Raw Claude response: {response.content[0].text}")
+            logger.info(f"Parsed result before enhancement: {json.dumps(result, indent=2)}")
+            
             # Enhance entities with NLP analysis
             result = self._enhance_entities_with_nlp(result, patient_note, preprocessed_note)
+            
+            # Debug: Log after enhancement
+            logger.info(f"Result after enhancement: {json.dumps(result, indent=2)}")
             
             result['analysis_timestamp'] = datetime.utcnow().isoformat()
             result['model_version'] = "claude-3-5-sonnet-20241022"
@@ -349,14 +356,19 @@ Return only the JSON object, no additional text."""
                             'original_span': text_span
                         }
                         
+                        # Ensure consistent entity structure with text field
+                        enhanced_entity = self._standardize_entity_structure(enhanced_entity, original_text, entity_position)
                         enhanced_entities.append(enhanced_entity)
                     else:
-                        # Keep original entity if position not found
-                        enhanced_entities.append(entity)
+                        # Keep original entity if position not found but standardize structure
+                        standardized_entity = self._standardize_entity_structure(entity, original_text)
+                        enhanced_entities.append(standardized_entity)
                         
                 except Exception as e:
                     logger.warning(f"Failed to enhance entity {entity.get('entity', 'unknown')}: {str(e)}")
-                    enhanced_entities.append(entity)
+                    # Still standardize the entity structure even if enhancement fails
+                    standardized_entity = self._standardize_entity_structure(entity, original_text)
+                    enhanced_entities.append(standardized_entity)
             
             enhanced_result[entity_type] = enhanced_entities
         
@@ -370,6 +382,64 @@ Return only the JSON object, no additional text."""
         }
         
         return enhanced_result
+    
+    def _standardize_entity_structure(self, entity: Dict[str, Any], original_text: str, 
+                                      entity_position: Optional[tuple[int, int]] = None) -> Dict[str, Any]:
+        """
+        Standardize entity structure to ensure consistent field mapping
+        
+        Args:
+            entity: Original entity from Claude response
+            original_text: Full text for position lookup
+            entity_position: Optional position tuple (start, end)
+            
+        Returns:
+            Standardized entity with consistent field names
+        """
+        standardized = entity.copy()
+        
+        # Ensure we have a 'text' field with the actual entity text
+        entity_text = entity.get('entity', '') or entity.get('text_span', '') or entity.get('text', '')
+        
+        if entity_text:
+            standardized['text'] = entity_text
+            
+            # If we have position info, use it; otherwise try to find it
+            if entity_position:
+                start, end = entity_position
+                standardized['start'] = start
+                standardized['end'] = end
+                # Verify the text matches the position
+                extracted_text = original_text[start:end]
+                if extracted_text.strip() == entity_text.strip():
+                    standardized['text'] = extracted_text
+            else:
+                # Try to find the entity in the text
+                try:
+                    start_pos = original_text.lower().find(entity_text.lower())
+                    if start_pos != -1:
+                        standardized['start'] = start_pos
+                        standardized['end'] = start_pos + len(entity_text)
+                    else:
+                        standardized['start'] = 0
+                        standardized['end'] = 0
+                except:
+                    standardized['start'] = 0
+                    standardized['end'] = 0
+        else:
+            # If no entity text found, mark as empty
+            standardized['text'] = 'Unknown entity'
+            standardized['start'] = 0
+            standardized['end'] = 0
+            
+        # Ensure other required fields exist
+        if 'confidence' not in standardized:
+            standardized['confidence'] = 0.5
+            
+        if 'type' not in standardized:
+            standardized['type'] = 'unknown'
+            
+        return standardized
     
     def _find_entity_position(self, text: str, text_span: str, entity_text: str) -> Optional[tuple[int, int]]:
         """

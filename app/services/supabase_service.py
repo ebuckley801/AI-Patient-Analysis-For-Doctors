@@ -39,3 +39,28 @@ class SupabaseService:
         """Search patient notes by text"""
         response = self.client.table('patient_notes').select('*').ilike(field, f'%{query}%').execute()
         return response.data
+    
+    def get_user_by_email(self, email):
+        """Get a user by email"""
+        response = self.client.table('users').select('*').eq('email', email).execute()
+        return response.data[0] if response.data else None
+    
+    def get_user_by_id(self, user_id):
+        """Get a user by ID"""
+        response = self.client.table('users').select('*').eq('id', user_id).execute()
+        return response.data[0] if response.data else None
+    
+    def create_user(self, user_data):
+        """Create a new user"""
+        response = self.client.table('users').insert(user_data).execute()
+        return response.data[0] if response.data else None
+    
+    def update_user(self, user_id, user_data):
+        """Update an existing user"""
+        response = self.client.table('users').update(user_data).eq('id', user_id).execute()
+        return response.data[0] if response.data else None
+    
+    def delete_user(self, user_id):
+        """Delete a user"""
+        response = self.client.table('users').delete().eq('id', user_id).execute()
+        return response.data[0] if response.data else None

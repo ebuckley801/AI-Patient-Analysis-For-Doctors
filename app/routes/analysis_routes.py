@@ -4,6 +4,7 @@ import logging
 import asyncio
 from datetime import datetime
 import concurrent.futures
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
 from app.services.clinical_analysis_service import ClinicalAnalysisService
 from app.services.enhanced_clinical_analysis import EnhancedClinicalAnalysisService, create_enhanced_clinical_analysis_service
@@ -883,6 +884,10 @@ class PriorityScan(Resource):
 
 @analysis_ns.route('/extract-enhanced')
 class ExtractClinicalEntitiesEnhanced(Resource):
+    def options(self):
+        """Handle preflight OPTIONS request"""
+        return {}, 200
+    
     @analysis_ns.doc('extract_clinical_entities_enhanced')
     @analysis_ns.expect(enhanced_extract_request_model, validate=True)
     @analysis_ns.marshal_with(base_analysis_result_model) # Assuming enhanced returns similar structure

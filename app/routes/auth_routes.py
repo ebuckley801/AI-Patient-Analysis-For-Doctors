@@ -13,19 +13,19 @@ supabase_service = SupabaseService()
 # Models for API documentation
 user_model = auth_ns.model('User', {
     'id': fields.String(readOnly=True, description='The user unique identifier'),
-    'email': fields.String(required=True, description='The user's email address'),
-    'role': fields.String(readOnly=True, description='The user's role', default='user'),
+    'email': fields.String(required=True, description='The user\'s email address'),
+    'role': fields.String(readOnly=True, description='The user\'s role', default='user'),
     'created_at': fields.DateTime(readOnly=True, description='The timestamp of user creation')
 })
 
 register_model = auth_ns.model('Register', {
-    'email': fields.String(required=True, description='The user's email address'),
-    'password': fields.String(required=True, description='The user's password', min_length=6)
+    'email': fields.String(required=True, description='The user\'s email address'),
+    'password': fields.String(required=True, description='The user\'s password', min_length=6)
 })
 
 login_model = auth_ns.model('Login', {
-    'email': fields.String(required=True, description='The user's email address'),
-    'password': fields.String(required=True, description='The user's password')
+    'email': fields.String(required=True, description='The user\'s email address'),
+    'password': fields.String(required=True, description='The user\'s password')
 })
 
 token_model = auth_ns.model('Token', {
@@ -35,6 +35,10 @@ token_model = auth_ns.model('Token', {
 
 @auth_ns.route('/register')
 class UserRegister(Resource):
+    def options(self):
+        """Handle preflight OPTIONS request"""
+        return {}, 200
+    
     @auth_ns.doc('register_user')
     @auth_ns.expect(register_model, validate=True)
     @auth_ns.marshal_with(user_model, code=201)
@@ -67,6 +71,10 @@ class UserRegister(Resource):
 
 @auth_ns.route('/login')
 class UserLogin(Resource):
+    def options(self):
+        """Handle preflight OPTIONS request"""
+        return {}, 200
+    
     @auth_ns.doc('login_user')
     @auth_ns.expect(login_model, validate=True)
     @auth_ns.marshal_with(token_model)
@@ -96,27 +104,9 @@ class ProtectedResource(Resource):
             auth_ns.abort(404, message='User not found')
         return {'message': f'Hello, {user['email']}! You have access to this protected resource.', 'user_id': current_user_id}, 200
 
-# Error handlers for the namespace
-@auth_ns.errorhandler(401)
-def unauthorized(error):
-    return {
-        'success': False,
-        'error': 'Unauthorized',
-        'code': 'UNAUTHORIZED'
-    }, 401
-
-@auth_ns.errorhandler(409)
-def conflict(error):
-    return {
-        'success': False,
-        'error': 'Conflict',
-        'code': 'CONFLICT'
-    }, 409
-
-@auth_ns.errorhandler(500)
-def internal_error(error):
-    return {
-        'success': False,
-        'error': 'Internal server error',
-        'code': 'INTERNAL_ERROR'
-    }, 500
+# Response models for error documentation
+error_model = auth_ns.model('Error', {
+    'success': fields.Boolean(default=False),
+    'error': fields.String(description='Error message'),
+    'code': fields.String(description='Error code')
+})

@@ -114,7 +114,7 @@ similar_patients_query_metadata_model = multimodal_ns.model('SimilarPatientsQuer
 
 find_similar_patients_request_model = multimodal_ns.model('FindSimilarPatientsRequest', {
     'query_patient_id': fields.String(required=True),
-    'target_modality': fields.String(required=True, enum=[mod.value for mod in ModalityType])
+    'target_modality': fields.String(required=True, enum=[mod.value for mod in ModalityType]),
     'source_modalities': fields.List(fields.String(enum=[mod.value for mod in ModalityType])),
     'top_k': fields.Integer(default=10),
     'min_similarity': fields.Float(default=0.1)

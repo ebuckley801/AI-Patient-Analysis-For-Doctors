@@ -54,6 +54,9 @@ class FaissICD10VectorMatcher:
         self.metadata_path = self.index_path.replace('.bin', '_metadata.pkl')
         self.config_path = self.index_path.replace('.bin', '_config.json')
         
+        # Ensure directory exists
+        Path(self.index_path).parent.mkdir(parents=True, exist_ok=True)
+        
         # Performance tracking
         self.build_time = None
         self.total_vectors = 0
@@ -110,37 +113,81 @@ class FaissICD10VectorMatcher:
         try:
             logger.info("📊 Loading ICD-10 data from database...")
             
-            # Load data in batches for memory efficiency with large datasets
-            batch_size = 5000
+            # Load ALL data in batches - continue until no more records
+            batch_size = 1000  # Process in chunks for memory efficiency
             all_embeddings = []
             all_metadata = []
             offset = 0
+            batch_count = 0
+            consecutive_errors = 0
+            max_consecutive_errors = 3  # Stop only after 3 consecutive errors
             
-            while True:
-                # Query batch of data
-                response = self.supabase_service.client.table('icd_codes')\
-                    .select('icd_10_code,description,embedded_description')\
-                    .range(offset, offset + batch_size - 1)\
-                    .execute()
-                
-                if not response.data:
-                    break
-                
-                batch_embeddings, batch_metadata = self._process_batch(response.data)
-                all_embeddings.extend(batch_embeddings)
-                all_metadata.extend(batch_metadata)
-                
-                offset += batch_size
-                logger.info(f"📈 Processed {len(all_embeddings)} vectors...")
-                
-                # Break if batch was smaller than batch_size (last batch)
-                if len(response.data) < batch_size:
-                    break
+            logger.info(f"🔄 Loading ALL ICD records from database (estimated ~74K records)...")
+            
+            while True:  # Continue until we've read all records
+                try:
+                    # Query batch of data
+                    response = self.supabase_service.client.table('icd_10_codes')\
+                        .select('icd_10_code,description,embedded_description')\
+                        .range(offset, offset + batch_size - 1)\
+                        .execute()
+                    
+                    if not response.data:
+                        logger.info(f"📋 No more data at offset {offset}, finished loading")
+                        break
+                    
+                    batch_embeddings, batch_metadata = self._process_batch(response.data)
+                    all_embeddings.extend(batch_embeddings)
+                    all_metadata.extend(batch_metadata)
+                    
+                    offset += batch_size
+                    batch_count += 1
+                    consecutive_errors = 0  # Reset error counter on success
+                    
+                    # Progress reporting with estimated total
+                    estimated_total = 74000  # Estimated 74K records
+                    current_total = len(all_embeddings)
+                    percent = min((current_total / estimated_total) * 100, 100)
+                    
+                    # Progress bar
+                    bar_length = 40
+                    filled_length = int(bar_length * (current_total / estimated_total))
+                    bar = '█' * filled_length + '-' * (bar_length - filled_length)
+                    
+                    print(f'\r📈 Loading: |{bar}| {current_total}/{estimated_total} ({percent:.1f}%) records', end='', flush=True)
+                    
+                    # Also log every 10 batches
+                    if batch_count % 10 == 0:
+                        logger.info(f"📈 Batch {batch_count}: Processed {len(batch_embeddings)} vectors (total: {len(all_embeddings)})")
+                    
+                    # Break if batch was smaller than batch_size (last batch)
+                    if len(response.data) < batch_size:
+                        logger.info(f"📋 Last batch detected ({len(response.data)} < {batch_size}), finished loading ALL records")
+                        break
+                        
+                except Exception as batch_error:
+                    consecutive_errors += 1
+                    logger.error(f"❌ Error in batch {batch_count} at offset {offset}: {batch_error}")
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        logger.error(f"❌ {max_consecutive_errors} consecutive errors, stopping batch loading")
+                        break
+                    
+                    # Try to continue with next batch
+                    offset += batch_size
+                    batch_count += 1
+                    logger.info(f"🔄 Retrying with next batch (error {consecutive_errors}/{max_consecutive_errors})")
+                    continue
+            
+            # Final progress update
+            print()  # New line after progress bar
+            logger.info(f"✅ Completed loading {len(all_embeddings)} records in {batch_count} batches")
             
             if not all_embeddings:
-                raise ValueError("No valid embeddings found in database")
+                raise ValueError(f"No valid embeddings found in database after processing {batch_count} batches")
             
             # Convert to numpy array
+            logger.info(f"🔄 Converting {len(all_embeddings)} embeddings to numpy array...")
             embeddings_array = np.array(all_embeddings, dtype=np.float32)
             self.icd_metadata = all_metadata
             self.total_vectors = len(all_embeddings)
@@ -148,13 +195,15 @@ class FaissICD10VectorMatcher:
             logger.info(f"📊 Dataset summary: {self.total_vectors} vectors, dimension: {self.dimension}")
             
             # Build optimized index based on dataset size
+            logger.info(f"🔄 Building Faiss index for {self.total_vectors} vectors...")
             self._build_optimized_index(embeddings_array)
             
             # Save index and metadata
+            logger.info(f"💾 Saving index and metadata...")
             self._save_index_and_metadata(embeddings_array)
             
             self.build_time = time.time() - start_time
-            logger.info(f"✅ Faiss index built in {self.build_time:.2f}s")
+            logger.info(f"✅ Faiss index built successfully in {self.build_time:.2f}s with {self.total_vectors} vectors")
             
         except Exception as e:
             logger.error(f"❌ Failed to build Faiss index: {e}")
