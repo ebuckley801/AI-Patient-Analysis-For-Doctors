@@ -117,6 +117,24 @@ class ICD10VectorMatcher:
             self._embedding_cache[cache_key] = fallback
             return fallback
     
+    def _get_batch_embeddings(self, entity_texts: List[str]) -> np.ndarray:
+        """
+        Get embeddings for multiple entities in batch for better performance
+        
+        Args:
+            entity_texts: List of entity text strings
+            
+        Returns:
+            numpy array of shape (len(entity_texts), 1536)
+        """
+        embeddings = []
+        
+        for entity_text in entity_texts:
+            embedding = self._get_entity_embedding(entity_text)
+            embeddings.append(embedding)
+        
+        return np.array(embeddings, dtype=np.float32)
+    
     def _extract_semantic_features(self, text: str) -> np.ndarray:
         """
         Extract semantic features from text using fast rule-based medical concept mapping
@@ -268,7 +286,122 @@ class ICD10VectorMatcher:
                 
             except Exception as e:
                 logger.error(f"Faiss search failed: {e}, falling back to numpy")
-                # Continue to numpy fallback
+                # Continue to numpy fallback below
+        
+        # Numpy fallback implementation
+        if self._icd_codes_cache is None or self._embeddings_cache is None:
+            logger.warning("No ICD data loaded")
+            return []
+        
+        try:
+            # Get embedding for the entity
+            entity_embedding = self._get_entity_embedding(entity_text)
+            
+            # Calculate similarities with all ICD codes
+            similarities = []
+            for i, icd_embedding in enumerate(self._embeddings_cache):
+                similarity = self.cosine_similarity(entity_embedding, icd_embedding)
+                if similarity >= min_similarity:
+                    similarities.append((similarity, i))
+            
+            # Sort by similarity and get top results
+            similarities.sort(reverse=True)
+            results = []
+            
+            for similarity, idx in similarities[:top_k]:
+                icd_data = self._icd_codes_cache[idx]
+                results.append({
+                    'icd_code': icd_data['icd_10_code'],
+                    'code': icd_data['icd_10_code'],
+                    'description': icd_data['description'],
+                    'similarity': similarity,
+                    'search_method': 'numpy',
+                    'entity_text': entity_text
+                })
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error in numpy ICD search: {str(e)}")
+            return []
+    
+    def find_similar_icd_codes_batch(self, entity_texts: List[str], top_k: int = 5, min_similarity: float = 0.1) -> List[List[Dict[str, Any]]]:
+        """
+        Find similar ICD codes for multiple entities in batch (faster than individual searches)
+        
+        Args:
+            entity_texts: List of entity text strings to search for
+            top_k: Number of top results to return per entity
+            min_similarity: Minimum similarity threshold
+            
+        Returns:
+            List of results lists, one per input entity
+        """
+        if not entity_texts:
+            return []
+        
+        try:
+            if self.use_faiss and self.faiss_matcher is not None:
+                # Use Faiss batch search
+                query_embeddings = self._get_batch_embeddings(entity_texts)
+                
+                # Faiss batch search
+                similarities, indices = self.faiss_matcher.index.search(query_embeddings, top_k * 2)  # Search more, filter later
+                
+                # Process results for each query
+                batch_results = []
+                for i, entity_text in enumerate(entity_texts):
+                    entity_results = []
+                    
+                    for j in range(len(similarities[i])):
+                        similarity = similarities[i][j]
+                        idx = indices[i][j]
+                        
+                        if idx >= 0 and idx < len(self.faiss_matcher.icd_metadata):
+                            # Convert L2 distance to cosine similarity (for normalized vectors)
+                            cosine_sim = 1.0 - (similarity / 2.0)
+                            
+                            if cosine_sim >= min_similarity:
+                                metadata = self.faiss_matcher.icd_metadata[idx]
+                                entity_results.append({
+                                    'icd_code': metadata['icd_code'],
+                                    'description': metadata['description'],
+                                    'similarity': float(cosine_sim),
+                                    'rank': len(entity_results) + 1,
+                                    'search_method': 'faiss_batch',
+                                    'query_text': entity_text
+                                })
+                                
+                                if len(entity_results) >= top_k:
+                                    break
+                    
+                    batch_results.append(entity_results)
+                
+                return batch_results
+                
+            else:
+                # Fallback to individual numpy searches
+                batch_results = []
+                for entity_text in entity_texts:
+                    results = self.find_similar_icd_codes(entity_text, top_k, min_similarity)
+                    batch_results.append(results)
+                return batch_results
+                
+        except Exception as e:
+            logger.error(f"Error in batch ICD search: {str(e)}")
+            # Fallback to individual searches
+            batch_results = []
+            for entity_text in entity_texts:
+                try:
+                    results = self.find_similar_icd_codes(entity_text, top_k, min_similarity)
+                    batch_results.append(results)
+                except:
+                    batch_results.append([])
+            return batch_results
+                
+        except Exception as e:
+            logger.error(f"Faiss search failed: {e}, falling back to numpy")
+            # Continue to numpy fallback
         
         # Fallback to numpy implementation
         return self._find_similar_icd_codes_numpy(entity_text, top_k, min_similarity)

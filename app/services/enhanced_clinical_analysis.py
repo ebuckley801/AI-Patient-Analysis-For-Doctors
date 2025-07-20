@@ -479,8 +479,9 @@ Return ONLY valid JSON in this exact format:
                 entity_text = condition.get('entity', '')
                 if entity_text:
                     # Try multiple search strategies for better matching
+                    search_start = time.time()
                     icd_matches = self._smart_icd_search(entity_text, condition, top_k, 'condition')
-                    search_time = 0  # Measured inside _smart_icd_search
+                    search_time = (time.time() - search_start) * 1000  # Convert to milliseconds
                     
                     # Safe logging with type checking
                     try:
@@ -535,7 +536,9 @@ Return ONLY valid JSON in this exact format:
                 entity_text = symptom.get('entity', '')
                 if entity_text and not symptom.get('negated', False):  # Skip negated symptoms
                     # Try multiple search strategies for better matching
+                    search_start = time.time()
                     icd_matches = self._smart_icd_search(entity_text, symptom, min(top_k, 3), 'symptom')
+                    search_time = (time.time() - search_start) * 1000  # Convert to milliseconds
                     
                     # Safe logging with type checking
                     try:
@@ -617,6 +620,146 @@ Return ONLY valid JSON in this exact format:
         
         # Return the most descriptive term (usually the longest)
         return max(search_terms, key=len)
+    
+    def _generate_search_variants(self, entity_text: str, entity_data: Dict[str, Any]) -> List[str]:
+        """
+        Generate multiple search variants for parallel ICD search
+        
+        Args:
+            entity_text: Original entity text
+            entity_data: Full entity data with context
+            
+        Returns:
+            List of search variant strings
+        """
+        variants = []
+        
+        # 1. Original text
+        variants.append(entity_text)
+        
+        # 2. Medical synonyms and expansions
+        medical_synonyms = {
+            'chest pain': ['thoracic pain', 'thoracalgia', 'chest discomfort'],
+            'shortness of breath': ['dyspnea', 'breathlessness', 'respiratory distress'],
+            'heart attack': ['myocardial infarction', 'MI', 'cardiac arrest'],
+            'diabetes': ['diabetes mellitus', 'DM', 'hyperglycemia'],
+            'high blood pressure': ['hypertension', 'HTN', 'elevated blood pressure'],
+            'fever': ['pyrexia', 'hyperthermia', 'elevated temperature'],
+            'headache': ['cephalgia', 'head pain'],
+            'stomach pain': ['abdominal pain', 'gastric pain', 'epigastric pain'],
+            'back pain': ['dorsalgia', 'spinal pain', 'lumbar pain'],
+            'pneumonia': ['lung infection', 'respiratory infection'],
+            'stroke': ['cerebrovascular accident', 'CVA', 'brain attack']
+        }
+        
+        entity_lower = entity_text.lower()
+        for key, synonyms in medical_synonyms.items():
+            if key in entity_lower:
+                variants.extend(synonyms)
+        
+        # 3. Add severity context if available
+        severity = entity_data.get('severity')
+        if severity and severity not in ['unknown', 'unspecified']:
+            variants.append(f"{severity} {entity_text}")
+        
+        # 4. Add temporal context if available
+        temporal = entity_data.get('temporal')
+        if temporal:
+            if isinstance(temporal, str) and temporal not in ['unknown', 'unspecified']:
+                variants.append(f"{temporal} {entity_text}")
+            elif isinstance(temporal, dict):
+                if temporal.get('onset'):
+                    variants.append(f"{temporal['onset']} {entity_text}")
+        
+        # 5. Add anatomical context for pain/symptoms
+        anatomical_expansions = {
+            'pain': ['ache', 'discomfort', 'soreness'],
+            'chest': ['thoracic', 'cardiac', 'pulmonary'],
+            'stomach': ['abdominal', 'gastric', 'epigastric'],
+            'head': ['cranial', 'cephalic']
+        }
+        
+        for anatomy, expansions in anatomical_expansions.items():
+            if anatomy in entity_lower:
+                for expansion in expansions:
+                    variants.append(entity_text.replace(anatomy, expansion))
+        
+        # 6. Remove duplicates and empty strings
+        variants = list(set([v.strip() for v in variants if v.strip()]))
+        
+        # 7. Limit to reasonable number (avoid too many API calls)
+        return variants[:6]
+    
+    def _merge_and_rank_search_results(self, variant_results: List[List[Dict[str, Any]]], variants: List[str]) -> List[Dict[str, Any]]:
+        """
+        Merge and rank results from multiple search variants
+        
+        Args:
+            variant_results: List of result lists, one per variant
+            variants: Original variant strings used for search
+            
+        Returns:
+            Merged and ranked list of ICD matches
+        """
+        # Dictionary to collect results by ICD code
+        merged_results = {}
+        
+        for i, (results, variant) in enumerate(zip(variant_results, variants)):
+            for result in results:
+                icd_code = result.get('icd_code') or result.get('code')
+                if not icd_code:
+                    continue
+                
+                if icd_code not in merged_results:
+                    # First time seeing this ICD code
+                    merged_results[icd_code] = {
+                        'icd_code': icd_code,
+                        'code': icd_code,  # Ensure both fields exist
+                        'description': result.get('description', ''),
+                        'similarities': [result.get('similarity', 0)],
+                        'search_methods': [result.get('search_method', 'unknown')],
+                        'variants_found': [variant],
+                        'variant_count': 1,
+                        'best_similarity': result.get('similarity', 0),
+                        'avg_similarity': result.get('similarity', 0),
+                        'confidence_boost': 0
+                    }
+                else:
+                    # ICD code found via multiple variants - boost confidence
+                    existing = merged_results[icd_code]
+                    existing['similarities'].append(result.get('similarity', 0))
+                    existing['search_methods'].append(result.get('search_method', 'unknown'))
+                    existing['variants_found'].append(variant)
+                    existing['variant_count'] += 1
+                    existing['best_similarity'] = max(existing['best_similarity'], result.get('similarity', 0))
+                    existing['avg_similarity'] = sum(existing['similarities']) / len(existing['similarities'])
+                    
+                    # Boost confidence for codes found via multiple variants
+                    existing['confidence_boost'] = min(0.2, existing['variant_count'] * 0.05)
+        
+        # Convert to list and calculate final similarity scores
+        final_results = []
+        for icd_code, data in merged_results.items():
+            # Final similarity combines best similarity + confidence boost
+            final_similarity = min(1.0, data['best_similarity'] + data['confidence_boost'])
+            
+            final_results.append({
+                'icd_code': data['icd_code'],
+                'code': data['code'],
+                'description': data['description'],
+                'similarity': final_similarity,
+                'best_similarity': data['best_similarity'],
+                'avg_similarity': data['avg_similarity'],
+                'variant_count': data['variant_count'],
+                'variants_found': data['variants_found'],
+                'search_method': 'parallel_batch',
+                'confidence_boost': data['confidence_boost']
+            })
+        
+        # Sort by final similarity (best + boost)
+        final_results.sort(key=lambda x: x['similarity'], reverse=True)
+        
+        return final_results
     
     def _parse_claude_response(self, response_text: str) -> Dict[str, Any]:
         """Parse Claude's JSON response with error handling"""
@@ -808,67 +951,59 @@ Return ONLY valid JSON in this exact format:
     
     def _smart_icd_search(self, entity_text: str, entity_data: Dict[str, Any], top_k: int, entity_type: str) -> List[Dict[str, Any]]:
         """
-        Smart ICD search using multiple strategies and thresholds
+        Enhanced ICD search with parallel variant search for better accuracy and speed
         
         Args:
-            entity_text: Original entity text
-            entity_data: Full entity data with metadata
+            entity_text: Entity text to search for
+            entity_data: Full entity data for context
             top_k: Number of results to return
-            entity_type: 'condition' or 'symptom'
+            entity_type: Type of entity (condition, symptom, etc.)
             
         Returns:
-            List of ICD matches using best available strategy
+            List of ICD code matches with similarity scores
         """
-        
-        # Optimized search: try best strategies first with reasonable thresholds
-        # Priority order: synonyms (best match potential) → clean → original → enhanced
-        strategy_priority = []
-        
-        # Add synonyms first (highest match potential)
-        clean_upper = self._clean_medical_term(entity_text).upper()
-        if clean_upper in self.medical_synonyms:
-            for synonym in self.medical_synonyms[clean_upper]:
-                strategy_priority.append(('synonym', synonym))
-        
-        # Add clean term (removes modifiers)
-        clean_term = self._clean_medical_term(entity_text)
-        strategy_priority.append(('clean', clean_term))
-        
-        # Add original if different
-        if clean_term != entity_text:
-            strategy_priority.append(('original', entity_text))
-        
-        # Enhanced as fallback (often too specific)
-        enhanced_text = self._prepare_entity_for_icd_search(entity_data, True)
-        if enhanced_text not in [term for _, term in strategy_priority]:
-            strategy_priority.append(('enhanced', enhanced_text))
-        
-        # Use higher, more selective thresholds
-        thresholds = [0.6, 0.4, 0.2] if entity_type == 'condition' else [0.5, 0.3, 0.15]
-        
-        for strategy, search_term in strategy_priority:
-            for threshold in thresholds:
-                try:
-                    logger.info(f"🔍 Trying {strategy} search for '{entity_text}' → '{search_term}' (threshold: {threshold})")
-                    
-                    matches = self._cached_icd_search(search_term, top_k, threshold)
-                    
-                    if matches and len(matches) > 0:
-                        # Add strategy info to results
-                        for match in matches:
-                            match['search_strategy'] = strategy
-                            match['search_term'] = search_term
-                            match['threshold_used'] = threshold
-                        
-                        logger.info(f"✅ Success with {strategy} strategy: {len(matches)} matches (similarity: {matches[0].get('similarity', 0)*100:.1f}%+)")
-                        return matches
-                        
-                except Exception as e:
-                    logger.warning(f"Search failed for {strategy} '{search_term}': {e}")
-                    continue
-        
-        logger.info(f"❌ No matches found for '{entity_text}' with any strategy")
-        return []
+        try:
+            # Generate multiple search variants
+            variants = self._generate_search_variants(entity_text, entity_data)
+            
+            logger.info(f"🔍 Parallel search for '{entity_text}' using {len(variants)} variants: {variants}")
+            
+            # Perform batch search on all variants
+            variant_results = self.icd_matcher.find_similar_icd_codes_batch(
+                variants,
+                top_k=top_k * 2,  # Search more per variant for better merging
+                min_similarity=0.1  # Lower threshold since we'll boost multi-variant matches
+            )
+            
+            # Merge and rank results from all variants
+            merged_results = self._merge_and_rank_search_results(variant_results, variants)
+            
+            # Return top results
+            final_results = merged_results[:top_k]
+            
+            if final_results:
+                best_match = final_results[0]
+                logger.info(f"✅ Parallel search success: {len(final_results)} matches for '{entity_text}'")
+                logger.info(f"   Best: {best_match.get('code')} (sim: {best_match.get('similarity', 0):.3f}, variants: {best_match.get('variant_count', 1)})")
+            else:
+                logger.info(f"❌ No ICD matches found for '{entity_text}' after parallel search")
+            
+            return final_results
+            
+        except Exception as e:
+            logger.error(f"❌ Smart ICD search failed for '{entity_text}': {e}")
+            # Fallback to single search
+            try:
+                logger.info(f"🔄 Falling back to single search for '{entity_text}'")
+                fallback_results = self.icd_matcher.find_similar_icd_codes(
+                    entity_text,
+                    top_k=top_k,
+                    min_similarity=0.1
+                )
+                return fallback_results
+            except Exception as fallback_error:
+                logger.error(f"❌ Fallback search also failed: {fallback_error}")
+                return []
     
     def _clean_medical_term(self, term: str) -> str:
         """
