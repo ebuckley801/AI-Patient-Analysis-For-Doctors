@@ -16,6 +16,7 @@ import anthropic
 from app.config.config import Config
 from app.utils.clinical_nlp import create_clinical_nlp_processor
 from app.services.icd10_vector_matcher import ICD10VectorMatcher
+from app.services.claude_icd_matcher import create_claude_icd_matcher
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,9 @@ class EnhancedClinicalAnalysisService:
         self.client = anthropic.Anthropic(api_key=Config.ANTHROPIC_KEY)
         self.nlp_processor = create_clinical_nlp_processor()
         self.icd_matcher = ICD10VectorMatcher(force_numpy=force_numpy_icd)
+        
+        # Initialize Claude ICD matcher for high-accuracy suggestions
+        self.claude_icd_matcher = create_claude_icd_matcher()
         
         # Performance tracking
         self.analysis_stats = {
@@ -951,7 +955,7 @@ Return ONLY valid JSON in this exact format:
     
     def _smart_icd_search(self, entity_text: str, entity_data: Dict[str, Any], top_k: int, entity_type: str) -> List[Dict[str, Any]]:
         """
-        Enhanced ICD search with parallel variant search for better accuracy and speed
+        Hybrid ICD search: Fast parallel vector search + accurate Claude AI suggestions
         
         Args:
             entity_text: Entity text to search for
@@ -963,47 +967,83 @@ Return ONLY valid JSON in this exact format:
             List of ICD code matches with similarity scores
         """
         try:
-            # Generate multiple search variants
+            # Strategy 1: Fast parallel vector search (existing approach)
+            logger.info(f"🚀 Hybrid search for '{entity_text}' - trying vector search first...")
+            
             variants = self._generate_search_variants(entity_text, entity_data)
-            
-            logger.info(f"🔍 Parallel search for '{entity_text}' using {len(variants)} variants: {variants}")
-            
-            # Perform batch search on all variants
             variant_results = self.icd_matcher.find_similar_icd_codes_batch(
                 variants,
-                top_k=top_k * 2,  # Search more per variant for better merging
-                min_similarity=0.1  # Lower threshold since we'll boost multi-variant matches
+                top_k=top_k * 2,
+                min_similarity=0.2  # Higher threshold for vector search
             )
             
-            # Merge and rank results from all variants
-            merged_results = self._merge_and_rank_search_results(variant_results, variants)
+            vector_results = self._merge_and_rank_search_results(variant_results, variants)[:top_k]
             
-            # Return top results
-            final_results = merged_results[:top_k]
+            # Check if vector search found good results
+            has_good_vector_results = (
+                vector_results and 
+                len(vector_results) >= max(1, top_k // 2) and
+                vector_results[0].get('similarity', 0) >= 0.3
+            )
             
-            if final_results:
-                best_match = final_results[0]
-                logger.info(f"✅ Parallel search success: {len(final_results)} matches for '{entity_text}'")
-                logger.info(f"   Best: {best_match.get('code')} (sim: {best_match.get('similarity', 0):.3f}, variants: {best_match.get('variant_count', 1)})")
-            else:
-                logger.info(f"❌ No ICD matches found for '{entity_text}' after parallel search")
+            if has_good_vector_results:
+                logger.info(f"✅ Vector search success: {len(vector_results)} matches (best: {vector_results[0].get('similarity', 0):.3f})")
+                return vector_results
+                
+            # Strategy 2: Claude AI suggestions (high accuracy fallback)
+            logger.info(f"🤖 Vector search insufficient, trying Claude AI suggestions...")
             
-            return final_results
+            # Prepare context for Claude
+            context = {
+                'severity': entity_data.get('severity'),
+                'temporal': entity_data.get('temporal'),
+            }
+            
+            claude_results = self.claude_icd_matcher.suggest_icd_codes(
+                entity_text=entity_text,
+                entity_type=entity_type,
+                top_k=top_k,
+                context=context
+            )
+            
+            if claude_results:
+                # Convert Claude results to match expected format
+                formatted_results = []
+                for result in claude_results:
+                    formatted_result = {
+                        'icd_code': result.get('code'),
+                        'code': result.get('code'),
+                        'description': result.get('description'),
+                        'similarity': result.get('confidence', 0.8),
+                        'search_method': 'claude_ai',
+                        'validated': result.get('validated', False),
+                        'database_match': result.get('database_match', 'unknown'),
+                        'reasoning': result.get('reasoning', '')
+                    }
+                    formatted_results.append(formatted_result)
+                
+                logger.info(f"✅ Claude AI success: {len(formatted_results)} suggestions (best: {formatted_results[0].get('similarity', 0):.3f})")
+                return formatted_results
+                
+            # Strategy 3: Lower threshold vector search (last resort)
+            logger.info(f"🔄 Trying lower threshold vector search as final fallback...")
+            
+            fallback_results = self.icd_matcher.find_similar_icd_codes(
+                entity_text,
+                top_k=top_k,
+                min_similarity=0.05
+            )
+            
+            if fallback_results:
+                logger.info(f"✅ Fallback search found {len(fallback_results)} results")
+                return fallback_results
+                
+            logger.info(f"❌ No ICD matches found for '{entity_text}' with any strategy")
+            return []
             
         except Exception as e:
             logger.error(f"❌ Smart ICD search failed for '{entity_text}': {e}")
-            # Fallback to single search
-            try:
-                logger.info(f"🔄 Falling back to single search for '{entity_text}'")
-                fallback_results = self.icd_matcher.find_similar_icd_codes(
-                    entity_text,
-                    top_k=top_k,
-                    min_similarity=0.1
-                )
-                return fallback_results
-            except Exception as fallback_error:
-                logger.error(f"❌ Fallback search also failed: {fallback_error}")
-                return []
+            return []
     
     def _clean_medical_term(self, term: str) -> str:
         """
