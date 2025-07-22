@@ -276,6 +276,36 @@ enhanced_extract_request_model = analysis_ns.model('EnhancedExtractRequest', {
     'enable_nlp_preprocessing': fields.Boolean(description='Whether to enable advanced NLP preprocessing', default=True)
 })
 
+icd_match_model = analysis_ns.model('ICDMatch', {
+    'code': fields.String,
+    'description': fields.String,
+    'similarity': fields.Float
+})
+
+icd_mapping_model = analysis_ns.model('ICDMapping', {
+    'entity': fields.String,
+    'entity_type': fields.String,
+    'best_match': fields.Nested(icd_match_model),
+    'icd_matches': fields.List(fields.Nested(icd_match_model))
+})
+
+performance_metrics_model = analysis_ns.model('PerformanceMetrics', {
+    'total_time_ms': fields.Float,
+    'preprocessing_time_ms': fields.Float,
+    'extraction_time_ms': fields.Float,
+    'nlp_enhancement_time_ms': fields.Float,
+    'icd_mapping_time_ms': fields.Float,
+    'chars_processed': fields.Integer,
+    'chars_preprocessed': fields.Integer
+})
+
+enhanced_analysis_response_model = analysis_ns.inherit('EnhancedAnalysisResponse', base_analysis_result_model, {
+    'icd_mappings': fields.List(fields.Nested(icd_mapping_model)),
+    'performance_metrics': fields.Nested(performance_metrics_model),
+    'icd_search_method': fields.String
+})
+
+
 # Performance Stats Models
 service_performance_model = analysis_ns.model('ServicePerformance', {
     'available': fields.Boolean,
@@ -890,7 +920,7 @@ class ExtractClinicalEntitiesEnhanced(Resource):
     
     @analysis_ns.doc('extract_clinical_entities_enhanced')
     @analysis_ns.expect(enhanced_extract_request_model, validate=True)
-    @analysis_ns.marshal_with(base_analysis_result_model) # Assuming enhanced returns similar structure
+    @analysis_ns.marshal_with(enhanced_analysis_response_model)
     @log_request()
     @jwt_required() # Add JWT protection
     def post(self):

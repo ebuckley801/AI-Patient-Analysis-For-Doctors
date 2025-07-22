@@ -35,20 +35,30 @@ export interface ClinicalEntity {
   confidence: number;
 }
 
-export interface ICDMapping {
+export interface ICDMatch {
   code: string;
   description: string;
-  similarity_score: number;
-  entity_text: string;
+  similarity: number;
+}
+
+export interface ICDMapping {
+  entity: string;
+  entity_type: string;
+  best_match: ICDMatch | null;
+  icd_matches: ICDMatch[];
 }
 
 export interface AnalysisResult {
   id: string;
   entities: ClinicalEntity[];
   icd_mappings: ICDMapping[];
-  analysis_time: number;
-  search_method: 'faiss' | 'numpy';
+  icd_search_method: 'faiss' | 'numpy';
   created_at: string;
+  performance_metrics?: {
+    total_time_ms: number;
+    [key: string]: any;
+  };
+  [key: string]: any;
 }
 
 // API response wrapper

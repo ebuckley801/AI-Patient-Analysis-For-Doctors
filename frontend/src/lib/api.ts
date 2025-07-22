@@ -93,7 +93,7 @@ class ApiClient {
       }
     });
     
-    // Extract ICD mappings from backend structure
+    // Transform ICD mappings to frontend expected structure
     const icdMappings: any[] = [];
     
     // Debug: Log ICD mappings structure
@@ -101,26 +101,33 @@ class ApiClient {
     
     if (backendData.icd_mappings && Array.isArray(backendData.icd_mappings)) {
       backendData.icd_mappings.forEach((mapping: any) => {
-        // Check if this mapping has actual ICD matches
-        if (mapping.icd_matches && Array.isArray(mapping.icd_matches)) {
-          mapping.icd_matches.forEach((match: any) => {
-            icdMappings.push({
-              code: match.code || match.icd_code || '',
-              description: match.description || '',
-              similarity_score: match.similarity || match.similarity_score || 0,
-              entity_text: mapping.entity || ''
-            });
-          });
-        } else if (mapping.best_match) {
-          // Use best match if available
-          const best = mapping.best_match;
-          icdMappings.push({
-            code: best.code || best.icd_code || '',
-            description: best.description || '',
-            similarity_score: best.similarity || best.similarity_score || 0,
-            entity_text: mapping.entity || ''
-          });
+        // Transform each mapping to frontend structure
+        const transformedMapping: any = {
+          entity: mapping.entity || '',
+          entity_type: mapping.entity_type || '',
+          best_match: null,
+          icd_matches: []
+        };
+        
+        // Transform best_match
+        if (mapping.best_match) {
+          transformedMapping.best_match = {
+            code: mapping.best_match.code || '',
+            description: mapping.best_match.description || '',
+            similarity: mapping.best_match.similarity || 0
+          };
         }
+        
+        // Transform icd_matches array
+        if (mapping.icd_matches && Array.isArray(mapping.icd_matches)) {
+          transformedMapping.icd_matches = mapping.icd_matches.map((match: any) => ({
+            code: match.code || '',
+            description: match.description || '',
+            similarity: match.similarity || 0
+          }));
+        }
+        
+        icdMappings.push(transformedMapping);
       });
     }
     
@@ -128,8 +135,8 @@ class ApiClient {
       id: backendData.session_id || Date.now().toString(),
       entities,
       icd_mappings: icdMappings,
-      analysis_time: backendData.analysis_time || 0,
-      search_method: backendData.search_method || 'faiss',
+      icd_search_method: backendData.icd_search_method || 'faiss',
+      performance_metrics: backendData.performance_metrics || { total_time_ms: 0 },
       created_at: backendData.analysis_timestamp || new Date().toISOString()
     };
   }

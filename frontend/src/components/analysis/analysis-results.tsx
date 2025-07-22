@@ -88,7 +88,7 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{results.analysis_time || 0}s</div>
+            <div className="text-2xl font-bold">{(results.performance_metrics?.total_time_ms / 1000).toFixed(2) || 'N/A'}s</div>
           </CardContent>
         </Card>
 
@@ -99,8 +99,8 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
           </CardHeader>
           <CardContent>
             <div className="text-sm font-bold capitalize">
-              <Badge variant={results.search_method === 'faiss' ? 'default' : 'secondary'}>
-                {results.search_method || 'N/A'}
+              <Badge variant={results.icd_search_method === 'faiss' ? 'default' : 'secondary'}>
+                {results.icd_search_method || 'N/A'}
               </Badge>
             </div>
           </CardContent>
@@ -184,29 +184,96 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {(results.icd_mappings || []).map((mapping, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <Badge variant="outline" className="font-mono">
-                          {mapping.code}
+                {(results.icd_mappings || []).map((mapping, index) => {
+                  // Show mappings with best_match
+                  if (mapping.best_match) {
+                    return (
+                      <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <Badge variant="outline" className="font-mono">
+                              {mapping.best_match.code}
+                            </Badge>
+                            <p className="font-medium">{mapping.best_match.description}</p>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Mapped from: <span className="font-medium">{mapping.entity}</span>
+                            {mapping.entity_type && (
+                              <Badge variant="secondary" className="ml-2 text-xs">
+                                {mapping.entity_type}
+                              </Badge>
+                            )}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-medium ${getConfidenceColor(mapping.best_match.similarity)}`}>
+                            {Math.round(mapping.best_match.similarity * 100)}%
+                          </p>
+                          <div className="w-16">
+                            <Progress value={mapping.best_match.similarity * 100} className="h-2" />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  // Show mappings without best_match but with icd_matches
+                  if (mapping.icd_matches && mapping.icd_matches.length > 0) {
+                    return (
+                      <div key={index} className="flex items-center justify-between p-3 border rounded-lg bg-yellow-50">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <Badge variant="outline" className="font-mono">
+                              {mapping.icd_matches[0].code}
+                            </Badge>
+                            <p className="font-medium">{mapping.icd_matches[0].description}</p>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Mapped from: <span className="font-medium">{mapping.entity}</span>
+                            {mapping.entity_type && (
+                              <Badge variant="secondary" className="ml-2 text-xs">
+                                {mapping.entity_type}
+                              </Badge>
+                            )}
+                            <Badge variant="outline" className="ml-2 text-xs text-yellow-700">
+                              Multiple matches
+                            </Badge>
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-medium ${getConfidenceColor(mapping.icd_matches[0].similarity)}`}>
+                            {Math.round(mapping.icd_matches[0].similarity * 100)}%
+                          </p>
+                          <div className="w-16">
+                            <Progress value={mapping.icd_matches[0].similarity * 100} className="h-2" />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  // Show mappings with neither (fallback)
+                  return (
+                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg bg-gray-50">
+                      <div className="flex-1">
+                        <p className="font-medium text-gray-600">No ICD codes found</p>
+                        <p className="text-sm text-muted-foreground">
+                          Mapped from: <span className="font-medium">{mapping.entity}</span>
+                          {mapping.entity_type && (
+                            <Badge variant="secondary" className="ml-2 text-xs">
+                              {mapping.entity_type}
+                            </Badge>
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <Badge variant="outline" className="text-xs text-gray-500">
+                          No match
                         </Badge>
-                        <p className="font-medium">{mapping.description}</p>
-                      </div>
-                      <p className="text-sm text-muted-foreground">
-                        Mapped from: <span className="font-medium">{mapping.entity_text}</span>
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className={`text-sm font-medium ${getConfidenceColor(mapping.similarity_score)}`}>
-                        {Math.round(mapping.similarity_score * 100)}%
-                      </p>
-                      <div className="w-16">
-                        <Progress value={mapping.similarity_score * 100} className="h-2" />
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 
                 {(!results.icd_mappings || results.icd_mappings.length === 0) && (
                   <div className="text-center py-8 text-muted-foreground">
@@ -265,12 +332,12 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-sm">Processing Time</span>
-                    <span className="text-sm font-medium">{results.analysis_time || 0}s</span>
+                    <span className="text-sm font-medium">{(results.performance_metrics?.total_time_ms / 1000).toFixed(2) || 0}s</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Search Method</span>
-                    <Badge variant={results.search_method === 'faiss' ? 'default' : 'secondary'}>
-                      {(results.search_method || 'N/A').toUpperCase()}
+                    <Badge variant={results.icd_search_method === 'faiss' ? 'default' : 'secondary'}>
+                      {(results.icd_search_method || 'N/A').toUpperCase()}
                     </Badge>
                   </div>
                   <div className="flex justify-between">
@@ -283,7 +350,7 @@ export function AnalysisResults({ results }: AnalysisResultsProps) {
 
                 <div className="pt-2 border-t">
                   <p className="text-xs text-muted-foreground">
-                    Analysis completed successfully with {results.search_method === 'faiss' ? 'optimized vector' : 'standard'} search method.
+                    Analysis completed successfully with {results.icd_search_method === 'faiss' ? 'optimized vector' : 'standard'} search method.
                   </p>
                 </div>
               </CardContent>

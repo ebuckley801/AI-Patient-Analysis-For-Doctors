@@ -480,7 +480,7 @@ Return ONLY valid JSON in this exact format:
                     logger.warning(f"⚠️ Skipping non-dict condition: {condition}")
                     continue
                     
-                entity_text = condition.get('entity', '')
+                entity_text = condition.get('entity', '') or condition.get('text', '')
                 if entity_text:
                     # Try multiple search strategies for better matching
                     search_start = time.time()
@@ -537,7 +537,7 @@ Return ONLY valid JSON in this exact format:
                     logger.warning(f"⚠️ Skipping non-dict symptom: {symptom}")
                     continue
                     
-                entity_text = symptom.get('entity', '')
+                entity_text = symptom.get('entity', '') or symptom.get('text', '')
                 if entity_text and not symptom.get('negated', False):  # Skip negated symptoms
                     # Try multiple search strategies for better matching
                     search_start = time.time()
@@ -1035,8 +1035,17 @@ Return ONLY valid JSON in this exact format:
             )
             
             if fallback_results:
-                logger.info(f"✅ Fallback search found {len(fallback_results)} results")
-                return fallback_results
+                logger.info(f"✅ Fallback search found {len(fallback_results)} results, normalizing...")
+                # Normalize to ensure consistent format, as this is a fallback
+                normalized_results = []
+                for res in fallback_results:
+                    norm_res = res.copy()
+                    norm_res['code'] = res.get('code') or res.get('icd_code')
+                    norm_res['description'] = res.get('description')
+                    norm_res['similarity'] = res.get('similarity') or res.get('similarity_score', 0)
+                    norm_res['search_method'] = 'vector_fallback'
+                    normalized_results.append(norm_res)
+                return normalized_results
                 
             logger.info(f"❌ No ICD matches found for '{entity_text}' with any strategy")
             return []
